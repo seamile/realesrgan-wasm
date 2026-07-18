@@ -1,0 +1,40 @@
+# Third-party notices
+
+This project redistributes or depends on the following open-source projects.
+Please follow their respective licenses when using models or code.
+
+## ncnn
+
+- Project: https://github.com/Tencent/ncnn
+- License: BSD 3-Clause (see `ncnn/LICENSE.txt`)
+- Used as a Git submodule for Route A (CPU WASM inference)
+
+## Real-ESRGAN
+
+- Project: https://github.com/xinntao/Real-ESRGAN
+- License: BSD 3-Clause
+- Models / algorithm reference; weights downloaded separately by scripts
+
+## Real-ESRGAN-ncnn-vulkan
+
+- Project: https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan
+- Reference for tiling / ncnn model packaging
+
+## realcugan-ncnn-webassembly
+
+- Project: https://github.com/hanFengSan/realcugan-ncnn-webassembly
+- Engineering structure reference for Emscripten + ncnn WASM
+
+## onnxruntime-web
+
+- Project: https://github.com/microsoft/onnxruntime
+- License: MIT
+- Used for Route B (WebGPU). Vendored into `web/ort/` by `scripts/prepare_webgpu_models.ps1`
+
+## Models from community packages
+
+- `realesr-general-x4v3` may be obtained from
+  [TransparentLC/realesrgan-gui additional-models](https://github.com/TransparentLC/realesrgan-gui/releases/tag/additional-models)
+- Anime models from official Real-ESRGAN ncnn-vulkan release packages
+
+Model weights are **not** committed to this repository; download / convert them with the provided scripts.

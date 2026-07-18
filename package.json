@@ -1,0 +1,7 @@
+﻿{
+  "name": "real-esrgan-ncnn-webassembly",
+  "private": true,
+  "dependencies": {
+    "onnxruntime-web": "^1.22.0"
+  }
+}

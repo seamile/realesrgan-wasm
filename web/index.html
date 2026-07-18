@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Real-ESRGAN ncnn WebAssembly</title>
+  <script src="wasmFeatureDetect.js"></script>
+  <script src="webgpu/realesrgan-webgpu.js"></script>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a2332;
+      --text: #e7ecf3;
+      --muted: #8b9bb4;
+      --accent: #3d8bfd;
+      --ok: #3dd68c;
+      --warn: #f5a524;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: radial-gradient(1200px 600px at 20% -10%, #1c2a44, transparent), var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    main {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 32px 20px 64px;
+    }
+    h1 { margin: 0 0 8px; font-size: 1.75rem; }
+    .sub { color: var(--muted); margin-bottom: 28px; line-height: 1.5; }
+    .panel {
+      background: var(--panel);
+      border: 1px solid #2a364a;
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 16px;
+    }
+    label { display: block; margin-bottom: 8px; color: var(--muted); font-size: 0.9rem; }
+    select, button, input[type="file"] { font: inherit; }
+    select {
+      width: 100%;
+      max-width: 520px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid #3a4a63;
+      background: #121a26;
+      color: var(--text);
+    }
+    .row { margin-bottom: 16px; }
+    button {
+      padding: 10px 18px;
+      border: 0;
+      border-radius: 8px;
+      background: var(--accent);
+      color: white;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    button.secondary { background: #2b3a52; margin-left: 8px; }
+    .status { margin-top: 12px; color: var(--muted); min-height: 1.4em; }
+    .status.ok { color: var(--ok); }
+    .status.warn { color: var(--warn); }
+    progress { width: 100%; height: 10px; margin-top: 10px; }
+    .preview {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    @media (max-width: 720px) { .preview { grid-template-columns: 1fr; } }
+    .preview figure {
+      margin: 0;
+      background: #121a26;
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid #2a364a;
+    }
+    .preview figcaption {
+      padding: 8px 10px;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+    .preview img, .preview canvas {
+      display: block;
+      width: 100%;
+      height: auto;
+      background: #000;
+    }
+    /* Hide <img> until it has a real source to avoid the broken-image icon. */
+    .preview img:not([src]) { display: none; }
+    .preview .placeholder {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 220px;
+      margin: 10px;
+      border: 1px dashed #3a4a63;
+      border-radius: 8px;
+      color: var(--muted);
+      font-size: 0.85rem;
+      user-select: none;
+    }
+    .preview .placeholder svg { opacity: 0.55; }
+    .preview figure.has-image .placeholder { display: none; }
+    canvas.hidden { display: none; }
+    .hint { font-size: 0.85rem; color: var(--muted); line-height: 1.5; }
+    .backend-badge {
+      display: inline-block;
+      margin-left: 8px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      vertical-align: middle;
+      background: #2b3a52;
+      color: var(--muted);
+    }
+    .backend-badge.gpu { background: #163528; color: var(--ok); }
+    .backend-badge.cpu { background: #2a3140; color: var(--muted); }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Real-ESRGAN · 浏览器超分 <span id="backendBadge" class="backend-badge">检测中…</span></h1>
+  <p class="sub">
+    优先使用 <strong>WebGPU</strong>（路线 B / ONNX Runtime），不可用时自动回退
+    <strong>CPU WASM</strong>（路线 A / ncnn）。图片仅在本地处理。
+  </p>
+
+  <section class="panel">
+    <div class="row">
+      <label for="backendSelect">计算后端</label>
+      <select id="backendSelect">
+        <option value="auto">自动（优先 WebGPU）</option>
+        <option value="webgpu">强制 WebGPU</option>
+        <option value="cpu">强制 CPU (WASM)</option>
+      </select>
+    </div>
+    <div class="row">
+      <label for="modelSelect">模型</label>
+      <select id="modelSelect" disabled>
+        <option value="">等待引擎加载…</option>
+      </select>
+    </div>
+    <div class="row">
+      <label for="fileInput">选择图片（建议最长边 ≤ 1024；超大图请减小 tiles 压力）</label>
+      <input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp,image/bmp">
+    </div>
+    <div class="row">
+      <button id="btnProcess" disabled>开始超分</button>
+      <button id="btnSave" class="secondary" disabled>保存结果</button>
+      <button id="btnReload" class="secondary">刷新页面</button>
+    </div>
+    <div id="status" class="status">正在检测浏览器能力…</div>
+    <progress id="progress" value="0" max="100"></progress>
+    <p class="hint">
+      WebGPU 模型来自 <code>web/models-onnx/</code>（运行 <code>scripts/prepare_webgpu_models.ps1</code> 生成）。
+      CPU 模型来自编译时打包的 <code>models/</code>。
+    </p>
+  </section>
+
+  <section class="panel preview">
+    <figure id="figInput">
+      <figcaption>原图</figcaption>
+      <div class="placeholder">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="18" height="18" rx="2"/>
+          <circle cx="8.5" cy="8.5" r="1.5"/>
+          <path d="M21 15l-5-5L5 21"/>
+        </svg>
+        <span>尚未选择图片</span>
+      </div>
+      <img id="imgInput" alt="原图预览">
+    </figure>
+    <figure id="figOutput">
+      <figcaption id="outputCaption">超分结果</figcaption>
+      <div class="placeholder">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/>
+        </svg>
+        <span>处理完成后显示结果</span>
+      </div>
+      <img id="imgOutput" alt="超分结果预览">
+    </figure>
+  </section>
+
+  <canvas id="canvasInput" class="hidden"></canvas>
+  <canvas id="canvasOutput" class="hidden"></canvas>
+</main>
+
+<script>
+  var Module = null;
+  var wasmReady = false;
+  var wasmLoading = false;
+  var srcPtr = null;
+  var dstPtr = null;
+  var currentW = 0;
+  var currentH = 0;
+  var currentScale = 4;
+  var fileName = "output";
+  var models = [];
+  var activeBackend = null; // "webgpu" | "cpu"
+  var webgpuEngine = null;
+  var webgpuOk = false;
+  var ortScriptLoaded = false;
+
+  const statusEl = document.getElementById("status");
+  const progressEl = document.getElementById("progress");
+  const btnProcess = document.getElementById("btnProcess");
+  const btnSave = document.getElementById("btnSave");
+  const fileInput = document.getElementById("fileInput");
+  const modelSelect = document.getElementById("modelSelect");
+  const backendSelect = document.getElementById("backendSelect");
+  const backendBadge = document.getElementById("backendBadge");
+  const outputCaption = document.getElementById("outputCaption");
+  const imgInput = document.getElementById("imgInput");
+  const imgOutput = document.getElementById("imgOutput");
+  const figInput = document.getElementById("figInput");
+  const figOutput = document.getElementById("figOutput");
+
+  function showInputImage(src) {
+    imgInput.src = src;
+    figInput.classList.add("has-image");
+  }
+
+  function showOutputImage(src) {
+    imgOutput.src = src;
+    figOutput.classList.add("has-image");
+  }
+
+  function clearOutputImage() {
+    imgOutput.removeAttribute("src");
+    figOutput.classList.remove("has-image");
+  }
+  const canvasInput = document.getElementById("canvasInput");
+  const canvasOutput = document.getElementById("canvasOutput");
+
+  function setStatus(text, cls) {
+    statusEl.textContent = text;
+    statusEl.className = "status" + (cls ? " " + cls : "");
+  }
+
+  function setBadge(backend) {
+    if (backend === "webgpu") {
+      backendBadge.textContent = "WebGPU";
+      backendBadge.className = "backend-badge gpu";
+    } else if (backend === "cpu") {
+      backendBadge.textContent = "CPU WASM";
+      backendBadge.className = "backend-badge cpu";
+    } else {
+      backendBadge.textContent = "检测中…";
+      backendBadge.className = "backend-badge";
+    }
+  }
+
+  function selectedModel() {
+    const idx = parseInt(modelSelect.value, 10);
+    if (Number.isNaN(idx) || idx < 0 || idx >= models.length) return null;
+    return models[idx];
+  }
+
+  function syncModelUi() {
+    const m = selectedModel();
+    if (!m) return;
+    currentScale = m.scale;
+    const tag = activeBackend === "webgpu" ? "WebGPU" : "CPU";
+    outputCaption.textContent = "超分结果 (" + m.scale + "x · " + m.name + " · " + tag + ")";
+    btnProcess.textContent = "开始超分 (" + m.scale + "x)";
+  }
+
+  function canProcess() {
+    const ready = activeBackend === "webgpu"
+      ? (webgpuEngine && models.length > 0)
+      : (wasmReady && models.length > 0);
+    return ready && !!imgInput.src;
+  }
+
+  function populateCpuModels() {
+    const count = _list_models();
+    models = [];
+    modelSelect.innerHTML = "";
+    for (let i = 0; i < count; i++) {
+      const name = UTF8ToString(_get_model_name(i));
+      const scale = _get_model_scale(i);
+      const inputBlob = UTF8ToString(_get_model_input_blob(i));
+      const outputBlob = UTF8ToString(_get_model_output_blob(i));
+      models.push({ index: i, name, scale, inputBlob, outputBlob, backend: "cpu" });
+      const opt = document.createElement("option");
+      opt.value = String(i);
+      opt.textContent = name + "  [" + scale + "x · CPU]";
+      modelSelect.appendChild(opt);
+    }
+    modelSelect.disabled = models.length === 0;
+    if (models.length === 0) {
+      setStatus("CPU 未扫描到模型。请把 .param/.bin 放到 models/ 后重新编译。", "warn");
+      return;
+    }
+    let preferred = models.findIndex(m => m.name.indexOf("general-x4v3") >= 0 && m.name.indexOf("wdn") < 0);
+    if (preferred < 0) preferred = 0;
+    modelSelect.value = String(preferred);
+    syncModelUi();
+    setStatus("CPU 后端就绪，已加载 " + models.length + " 个模型。", "ok");
+    btnProcess.disabled = !canProcess();
+  }
+
+  function populateWebGpuModels(list) {
+    models = list.slice();
+    modelSelect.innerHTML = "";
+    models.forEach((m, i) => {
+      m.index = i;
+      const opt = document.createElement("option");
+      opt.value = String(i);
+      opt.textContent = m.name + "  [" + m.scale + "x · WebGPU]";
+      modelSelect.appendChild(opt);
+    });
+    modelSelect.disabled = models.length === 0;
+    if (models.length === 0) {
+      setStatus("未找到 WebGPU ONNX 模型。请运行 scripts/prepare_webgpu_models.ps1", "warn");
+      return;
+    }
+    let preferred = models.findIndex(m => m.name.indexOf("general-x4v3") >= 0);
+    if (preferred < 0) preferred = 0;
+    modelSelect.value = String(preferred);
+    syncModelUi();
+    setStatus("WebGPU 后端就绪，已加载 " + models.length + " 个模型。", "ok");
+    btnProcess.disabled = !canProcess();
+  }
+
+  function onCallback(raw) {
+    try {
+      const data = JSON.parse(raw);
+      if (data.eventType === "PROC_PROGRESS") {
+        const pct = Math.ceil(data.progress_rate * 100);
+        progressEl.value = pct;
+        const remain = Math.round((data.remaining_time || 0) / 1000);
+        setStatus("本地 CPU 处理中… " + pct + "%（预计剩余约 " + remain + "s）");
+      } else if (data.eventType === "PROC_END") {
+        finishCpuProcess(data.cost);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  function finishCpuProcess(costMs) {
+    if (costMs < 0) {
+      setStatus("处理失败，请检查模型是否兼容。", "warn");
+      btnProcess.disabled = false;
+      return;
+    }
+    const ctxOut = canvasOutput.getContext("2d");
+    const imageData = ctxOut.getImageData(0, 0, canvasOutput.width, canvasOutput.height);
+    const heap = (typeof GROWABLE_HEAP_U8 === "function") ? GROWABLE_HEAP_U8() : HEAPU8;
+    const result = heap.subarray(dstPtr, dstPtr + imageData.data.length);
+    imageData.data.set(result);
+    ctxOut.putImageData(imageData, 0, 0);
+    showOutputImage(canvasOutput.toDataURL("image/png"));
+
+    if (srcPtr) { _free(srcPtr); srcPtr = null; }
+    if (dstPtr) { _free(dstPtr); dstPtr = null; }
+
+    const sec = costMs < 1000 ? (costMs / 1000).toFixed(2) : Math.round(costMs / 1000);
+    setStatus("CPU 处理完成，耗时 " + sec + " 秒", "ok");
+    progressEl.value = 100;
+    btnProcess.disabled = false;
+    btnSave.disabled = false;
+  }
+
+  function loadOrtScript() {
+    return new Promise((resolve, reject) => {
+      if (ortScriptLoaded && typeof ort !== "undefined") {
+        resolve();
+        return;
+      }
+      const script = document.createElement("script");
+      script.src = "ort/ort.webgpu.min.js";
+      script.async = true;
+      script.onload = () => { ortScriptLoaded = true; resolve(); };
+      script.onerror = () => reject(new Error("未找到 ort/ort.webgpu.min.js，请运行 prepare_webgpu_models.ps1"));
+      document.body.appendChild(script);
+    });
+  }
+
+  function loadWasm() {
+    if (wasmReady || wasmLoading) {
+      return Promise.resolve(wasmReady);
+    }
+    wasmLoading = true;
+    return new Promise(async (resolve) => {
+      const hasSimd = await wasmFeatureDetect.simd();
+      const hasThreads = await wasmFeatureDetect.threads();
+      if (!hasSimd || !hasThreads) {
+        setStatus("当前浏览器不支持 WASM SIMD/多线程，无法使用 CPU 回退。", "warn");
+        wasmLoading = false;
+        resolve(false);
+        return;
+      }
+
+      Module = {
+        print: (text) => {
+          console.log(text);
+          if (typeof text === "string" && text.startsWith("$CALLBACK$")) {
+            onCallback(text.substring(11));
+          }
+        },
+        printErr: (text) => {
+          console.error(text);
+          setStatus("错误: " + text, "warn");
+        },
+        onRuntimeInitialized: () => {
+          wasmReady = true;
+          wasmLoading = false;
+          resolve(true);
+        }
+      };
+
+      setStatus("正在加载 CPU WASM 与模型资源…");
+      const script = document.createElement("script");
+      script.async = false;
+      script.src = "real-esrgan-ncnn-webassembly-simd-threads.js";
+      script.onerror = () => {
+        wasmLoading = false;
+        setStatus("未找到 CPU 编译产物，请先编译路线 A。", "warn");
+        resolve(false);
+      };
+      document.body.appendChild(script);
+    });
+  }
+
+  async function activateWebGpu() {
+    setStatus("正在初始化 WebGPU…");
+    await loadOrtScript();
+    if (!webgpuEngine) webgpuEngine = new RealESRGANWebGPU();
+    const list = await webgpuEngine.loadManifest("models-onnx/manifest.json");
+    // Touch session creation path lightly by ensuring ORT env is set, then probe adapter label.
+    await webgpuEngine.ensureOrt();
+    const gpuLabel = await webgpuEngine.getAdapterLabel();
+    activeBackend = "webgpu";
+    setBadge("webgpu");
+    populateWebGpuModels(list);
+    const igpuHint = /intel|uhd|iris|radeon\(tm\) graphics|graphics(?!.*rx)/i.test(gpuLabel);
+    if (igpuHint) {
+      setStatus(
+        "WebGPU 就绪（" + list.length + " 个模型）。当前适配器可能是核显：" + gpuLabel +
+        "。Windows 上 Chrome 常忽略 powerPreference，请用 chrome://flags/#force-high-performance-gpu 或系统图形设置把 Chrome 设为「高性能」后重启浏览器。",
+        "warn"
+      );
+    } else {
+      setStatus("WebGPU 就绪（" + list.length + " 个模型）。GPU：" + gpuLabel, "ok");
+    }
+  }
+
+  async function activateCpu() {
+    const ok = await loadWasm();
+    if (!ok) throw new Error("CPU WASM 不可用");
+    activeBackend = "cpu";
+    setBadge("cpu");
+    populateCpuModels();
+  }
+
+  async function selectBackend(preference) {
+    const want = preference || backendSelect.value || "auto";
+    try {
+      if (want === "cpu") {
+        await activateCpu();
+        return;
+      }
+      if (want === "webgpu" || want === "auto") {
+        if (!webgpuOk) {
+          if (want === "webgpu") throw new Error("浏览器不支持 WebGPU");
+        } else {
+          try {
+            await activateWebGpu();
+            return;
+          } catch (e) {
+            console.warn("WebGPU init failed, fallback to CPU", e);
+            if (want === "webgpu") throw e;
+          }
+        }
+      }
+      await activateCpu();
+    } catch (e) {
+      console.error(e);
+      setStatus(String(e.message || e), "warn");
+      btnProcess.disabled = true;
+    }
+  }
+
+  async function boot() {
+    webgpuEngine = new RealESRGANWebGPU();
+    webgpuOk = await webgpuEngine.detect();
+    if (webgpuOk) {
+      setStatus("检测到 WebGPU，优先使用 GPU 加速…");
+    } else {
+      setStatus("未检测到 WebGPU，将使用 CPU WASM…");
+    }
+    await selectBackend(backendSelect.value);
+  }
+
+  modelSelect.addEventListener("change", syncModelUi);
+
+  backendSelect.addEventListener("change", async () => {
+    btnProcess.disabled = true;
+    await selectBackend(backendSelect.value);
+    btnProcess.disabled = !canProcess();
+  });
+
+  fileInput.addEventListener("change", (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    fileName = file.name.replace(/\.[^/.]+$/, "") || "output";
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        currentW = img.width;
+        currentH = img.height;
+        canvasInput.width = currentW;
+        canvasInput.height = currentH;
+        canvasInput.getContext("2d").drawImage(img, 0, 0);
+        showInputImage(reader.result);
+        clearOutputImage();
+        btnSave.disabled = true;
+        btnProcess.disabled = !canProcess();
+        const maxSide = Math.max(currentW, currentH);
+        if (maxSide > 1024) {
+          setStatus("图片 " + currentW + "x" + currentH + "，较长边较大，处理可能较慢。", "warn");
+        } else {
+          setStatus("已加载 " + currentW + "x" + currentH + "，点击开始超分。");
+        }
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+
+  btnProcess.addEventListener("click", async () => {
+    const m = selectedModel();
+    if (!m) {
+      setStatus("请选择模型。", "warn");
+      return;
+    }
+    if (!currentW || !currentH) {
+      setStatus("请先选择图片。", "warn");
+      return;
+    }
+
+    currentScale = m.scale;
+    syncModelUi();
+    progressEl.value = 0;
+    btnProcess.disabled = true;
+    btnSave.disabled = true;
+
+    const uploadImageData = canvasInput.getContext("2d").getImageData(0, 0, currentW, currentH);
+    canvasOutput.width = currentW * m.scale;
+    canvasOutput.height = currentH * m.scale;
+
+    if (activeBackend === "webgpu") {
+      setStatus("启动 WebGPU 处理：" + m.name + " …");
+      try {
+        const result = await webgpuEngine.process(
+          uploadImageData.data,
+          currentW,
+          currentH,
+          m,
+          (p) => {
+            const pct = Math.ceil(p.progress_rate * 100);
+            progressEl.value = pct;
+            const remain = Math.round((p.remaining_time || 0) / 1000);
+            setStatus("本地 WebGPU 处理中… " + pct + "%（预计剩余约 " + remain + "s）");
+          }
+        );
+        const ctxOut = canvasOutput.getContext("2d");
+        const imageData = new ImageData(result.rgba, result.width, result.height);
+        ctxOut.putImageData(imageData, 0, 0);
+        showOutputImage(canvasOutput.toDataURL("image/png"));
+        const sec = result.cost < 1000 ? (result.cost / 1000).toFixed(2) : Math.round(result.cost / 1000);
+        setStatus("WebGPU 处理完成，耗时 " + sec + " 秒", "ok");
+        progressEl.value = 100;
+        btnSave.disabled = false;
+      } catch (e) {
+        console.error(e);
+        setStatus("WebGPU 失败：" + (e.message || e) + "。可切换到 CPU 后端重试。", "warn");
+      }
+      btnProcess.disabled = false;
+      return;
+    }
+
+    // CPU path
+    if (!wasmReady) {
+      setStatus("WASM 尚未加载完成。", "warn");
+      btnProcess.disabled = false;
+      return;
+    }
+    const outImageData = canvasOutput.getContext("2d").getImageData(0, 0, canvasOutput.width, canvasOutput.height);
+    if (srcPtr) { _free(srcPtr); }
+    if (dstPtr) { _free(dstPtr); }
+    srcPtr = _malloc(uploadImageData.data.length);
+    dstPtr = _malloc(outImageData.data.length);
+    const heap = (typeof GROWABLE_HEAP_U8 === "function") ? GROWABLE_HEAP_U8() : HEAPU8;
+    heap.set(uploadImageData.data, srcPtr);
+    setStatus("启动 CPU 处理：" + m.name + " …");
+    const ret = _process_image(0, srcPtr, dstPtr, currentW, currentH, m.index);
+    if (ret !== 0) {
+      setStatus("处理冲突，请稍后再试或刷新页面。", "warn");
+      btnProcess.disabled = false;
+    }
+  });
+
+  btnSave.addEventListener("click", () => {
+    const m = selectedModel();
+    const a = document.createElement("a");
+    a.href = canvasOutput.toDataURL("image/png");
+    a.download = fileName + "-" + (m ? m.name : "realesrgan") + ".png";
+    a.click();
+  });
+
+  document.getElementById("btnReload").addEventListener("click", () => location.reload());
+  boot();
+</script>
+</body>
+</html>
