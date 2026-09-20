@@ -4,8 +4,16 @@ Browser WebGPU inference uses `.onnx` files here via [onnxruntime-web](https://o
 
 ## Generate
 
+Windows PowerShell：
+
 ```powershell
 powershell -File .\scripts\prepare_webgpu_models.ps1
+```
+
+Linux：
+
+```bash
+./scripts/prepare_webgpu_models.sh
 ```
 
 This will:

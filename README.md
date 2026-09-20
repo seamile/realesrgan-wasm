@@ -37,9 +37,9 @@ English: see [README_EN.md](README_EN.md)
 │   ├── models-onnx/                          # WebGPU ONNX（.onnx 不进 Git）
 │   └── ort/                                  # onnxruntime-web 静态资源（不进 Git）
 └── scripts/
-    ├── download_models.ps1                   # 下载默认小模型
-    ├── prepare_webgpu_models.ps1             # 导出 ONNX + 安装 ORT
-    ├── convert_x2plus.ps1                    # 官方流程转换 x2plus -> ncnn
+    ├── download_models.ps1 / .sh             # 下载默认小模型（Windows / Linux）
+    ├── prepare_webgpu_models.ps1 / .sh       # 导出 ONNX + 安装 ORT
+    ├── convert_x2plus.ps1 / .sh              # 转换 x2plus -> ncnn
     └── pytorch2onnx_*.py
 ```
 
@@ -58,6 +58,7 @@ English: see [README_EN.md](README_EN.md)
 | Go 1.18+（可选） | `local_server.go` | 也可用其它能加 COOP/COEP 头的静态服务器 |
 | Python 3.9+ + PyTorch（可选） | 仅准备 WebGPU ONNX / 转换 x2plus 时需要 | |
 | Node.js 18+ / npm（可选） | 仅准备 WebGPU 时安装 onnxruntime-web | |
+| curl 或 wget、unzip（Linux） | Linux脚本下载和解压模型 | |
 | 浏览器 | Chrome / Edge（WebGPU）或支持 WASM SIMD+pthread 的桌面浏览器 | **不支持 iOS** |
 
 ### Windows 安装 Emscripten
@@ -98,8 +99,16 @@ git submodule update --init --recursive
 
 ### 2. 下载默认 CPU 小模型
 
+Windows PowerShell：
+
 ```powershell
 powershell -File .\scripts\download_models.ps1
+```
+
+Linux：
+
+```bash
+./scripts/download_models.sh
 ```
 
 默认包含：
@@ -107,7 +116,12 @@ powershell -File .\scripts\download_models.ps1
 - `realesr-general-x4v3`（照片 4x，约 4.6MB）
 - `realesr-animevideov3-x2/x3/x4`（动漫）
 
-可选：`powershell -File .\scripts\download_models.ps1 -IncludeWdn` 额外下载 wdn 变体。
+可选：
+
+- Windows：`powershell -File .\scripts\download_models.ps1 -IncludeWdn`
+- Linux：`./scripts/download_models.sh --include-wdn`
+
+额外下载 wdn 变体。
 
 > 大模型 `realesrgan-x2plus` **不要**直接下 HF 粗转包（可能含 `Shape` 层）。请用官方转换脚本（见下文「可选：x2plus」）。
 
@@ -132,10 +146,16 @@ sh build.sh
 
 ### 4.（可选）准备路线 B（WebGPU）
 
-需要 Python + PyTorch + Node.js：
+需要 Python + PyTorch + Node.js。Windows：
 
 ```powershell
 powershell -File .\scripts\prepare_webgpu_models.ps1
+```
+
+Linux：
+
+```bash
+./scripts/prepare_webgpu_models.sh
 ```
 
 会：
@@ -182,10 +202,12 @@ Chrome 在 Windows 上常把 WebGPU 绑在**核显**，并**忽略** `powerPrefe
 
 ```powershell
 # 1) 下载官方权重到 _convert/RealESRGAN_x2plus.pth
-# 2) 准备 onnx2ncnn / ncnnoptimize（见 scripts/convert_x2plus.ps1 注释）
+# 2) 准备 onnx2ncnn / ncnnoptimize
+#    Linux脚本从 PATH 查找，也可通过 NCNN_ONNX2NCNN / NCNNOPTIMIZE 指定路径。
 # 3) 运行：
 powershell -File .\scripts\convert_x2plus.ps1
-# 4) 重新 build.ps1
+# Linux：./scripts/convert_x2plus.sh
+# 4) 重新 build.ps1 或 build.sh
 ```
 
 WebGPU 版 x2plus 由 `prepare_webgpu_models.ps1` 一并导出（ONNX 约 67MB）。
@@ -217,6 +239,7 @@ WebGPU 版 x2plus 由 `prepare_webgpu_models.ps1` 一并导出（ONNX 约 67MB�
 |------|------|
 | pthread / SharedArrayBuffer 失败 | 必须用 `local_server.go`（或自建 COOP/COEP）；不要用 `file://` |
 | `EMSDK is not set` | 执行 `emsdk_env.ps1` / `source emsdk_env.sh` |
+| WebGPU提示找不到 `ort/ort.webgpu.min.js` | Linux运行 `./scripts/prepare_webgpu_models.sh`；Windows运行对应 `.ps1` |
 | 子模块为空 | `git submodule update --init --recursive` |
 | WebGPU 报 Shape mismatch / buffer reuse | 使用本仓库脚本导出的**固定尺寸** ONNX，不要用错误共用 `height`/`width` 符号维的动态模型 |
 | ORT 找不到 `.mjs` | 重新运行 `prepare_webgpu_models.ps1`，确保 `web/ort/` 含全部 `ort-wasm-simd-threaded.*` |

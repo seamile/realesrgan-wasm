@@ -157,7 +157,7 @@
     <div id="status" class="status">正在检测浏览器能力…</div>
     <progress id="progress" value="0" max="100"></progress>
     <p class="hint">
-      WebGPU 模型来自 <code>web/models-onnx/</code>（运行 <code>scripts/prepare_webgpu_models.ps1</code> 生成）。
+      WebGPU 模型来自 <code>web/models-onnx/</code>（运行 <code>scripts/prepare_webgpu_models.sh (Linux) 或 scripts/prepare_webgpu_models.ps1 (Windows)</code> 生成）。
       CPU 模型来自编译时打包的 <code>models/</code>。
     </p>
   </section>
@@ -318,7 +318,7 @@
     });
     modelSelect.disabled = models.length === 0;
     if (models.length === 0) {
-      setStatus("未找到 WebGPU ONNX 模型。请运行 scripts/prepare_webgpu_models.ps1", "warn");
+      setStatus("未找到 WebGPU ONNX 模型。请运行 scripts/prepare_webgpu_models.sh (Linux) 或 scripts/prepare_webgpu_models.ps1 (Windows)", "warn");
       return;
     }
     let preferred = models.findIndex(m => m.name.indexOf("general-x4v3") >= 0);
@@ -379,7 +379,7 @@
       script.src = "ort/ort.webgpu.min.js";
       script.async = true;
       script.onload = () => { ortScriptLoaded = true; resolve(); };
-      script.onerror = () => reject(new Error("未找到 ort/ort.webgpu.min.js，请运行 prepare_webgpu_models.ps1"));
+      script.onerror = () => reject(new Error("未找到 ort/ort.webgpu.min.js，请运行 prepare_webgpu_models.sh（Linux）或 prepare_webgpu_models.ps1（Windows）"));
       document.body.appendChild(script);
     });
   }

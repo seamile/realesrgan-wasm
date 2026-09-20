@@ -34,3 +34,5 @@ Thumbs.db
 *.user
 .vscode/
 .idea/
+/realcugan-server
+/local_server

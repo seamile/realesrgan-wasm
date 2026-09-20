@@ -13,7 +13,7 @@ if [ ! -f ./ncnn/CMakeLists.txt ]; then
 fi
 
 if ! ls ./models/*.bin >/dev/null 2>&1; then
-  echo "No models in ./models/. Run: powershell -File ./scripts/download_models.ps1" >&2
+  echo "No models in ./models/. Run: ./scripts/download_models.sh" >&2
   exit 1
 fi
 

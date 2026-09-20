@@ -12,10 +12,20 @@
 
 ## 一键下载（推荐）
 
+Windows PowerShell：
+
 ```powershell
 powershell -File .\scripts\download_models.ps1
 # 可选 wdn 变体：
 powershell -File .\scripts\download_models.ps1 -IncludeWdn
+```
+
+Linux：
+
+```bash
+./scripts/download_models.sh
+# 可选 wdn 变体：
+./scripts/download_models.sh --include-wdn
 ```
 
 然后重新编译：
@@ -40,7 +50,7 @@ models/
 |------|------|------|------|
 | realesr-animevideov3-x2/x3/x4 | 2/3/4 | ~1.2MB | 官方 ncnn-vulkan 包 |
 | realesr-general-x4v3 | 4 | ~4.6MB | additional-models |
-| realesrgan-x2plus | 2 | ~33MB fp16 | 用 `scripts/convert_x2plus.ps1` 官方流程转换，勿用含 Shape 的粗转包 |
+| realesrgan-x2plus | 2 | ~33MB fp16 | 用 `scripts/convert_x2plus.ps1` 或 `.sh` 官方流程转换，勿用含 Shape 的粗转包 |
 
 ## 注意
 
