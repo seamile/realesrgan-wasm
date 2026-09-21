@@ -17,17 +17,19 @@ Runtime preference: **WebGPU, falling back to CPU WASM**. Upstream ncnn browser 
 git clone --recursive https://github.com/panmeibing/real-esrgan-ncnn-webassembly.git
 cd real-esrgan-ncnn-webassembly
 
-# 1) Default small CPU models
+# 1) Install the Emscripten SDK once; build.sh loads its environment automatically
+(cd emsdk && ./emsdk install 3.1.28 && ./emsdk activate 3.1.28)
+
+# 2) Default small CPU models
 ./scripts/download_models.sh
 
-# 2) WebGPU publish assets (Python + PyTorch + Node.js; required for the first release build)
+# 3) WebGPU publish assets (Python + PyTorch + Node.js; required for the first release build)
 ./scripts/prepare_webgpu_models.sh
 
-# 3) Activate Emscripten, then build Route A and assemble dist/
-source /path/to/emsdk/emsdk_env.sh
+# 4) Build Route A and assemble dist/
 ./build.sh
 
-# 4) Serve dist/ with COOP/COEP (required for WASM threads)
+# 5) Serve dist/ with COOP/COEP (required for WASM threads)
 go run local_server.go
 # open http://localhost:8000
 ```

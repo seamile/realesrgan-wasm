@@ -28,7 +28,7 @@ English: see [README_EN.md](README_EN.md)
 ├── main.cpp / realesrgan.* / shape_layer.*   # 路线 A C++ 推理
 ├── CMakeLists.txt / build.sh                 # Emscripten 构建 + 组装 dist/
 ├── local_server.go                           # 服务 dist/ 的本地静态服务器（含 COOP/COEP）
-├── ncnn/                                     # Git 子模块
+├── ncnn/ / emsdk/                            # Git 子模块
 ├── models/                                   # CPU ncnn 模型源（权重不进 Git，编译时打进 .data）
 ├── web/                                      # 网页源码与 WebGPU 生成资源（发布输入，不直接部署）
 │   ├── index.html                            # 前端
@@ -65,22 +65,16 @@ English: see [README_EN.md](README_EN.md)
 | curl 或 wget | 下载模型与 ORT 资源 | macOS 无需额外安装 `unzip` |
 | 浏览器 | Chrome / Edge（WebGPU）或支持 WASM SIMD+pthread 的桌面浏览器 | **不支持 iOS** |
 
-### 安装 Emscripten（Linux / macOS）
+### 安装 Emscripten（Linux / macOS，首次构建前执行一次）
 
 ```bash
-git clone https://github.com/emscripten-core/emsdk.git
 cd emsdk
 ./emsdk install 3.1.28
 ./emsdk activate 3.1.28
-source ./emsdk_env.sh   # 每个新终端都要执行一次，或写入 shell 配置
+cd ..
 ```
 
-确认：
-
-```bash
-emcc -v
-echo $EMSDK
-```
+`build.sh` 会自动加载 `emsdk/emsdk_env.sh`，无需在每个新终端手动 `source`。
 
 ---
 
@@ -138,10 +132,7 @@ git submodule update --init --recursive
 
 ### 4. 编译路线 A 并组装发布站点
 
-先激活 emsdk，再：
-
 ```bash
-source /path/to/emsdk/emsdk_env.sh
 ./build.sh
 ```
 
@@ -249,7 +240,7 @@ WebGPU 版 x2plus 由 `prepare_webgpu_models.sh` 一并导出（ONNX 约 67MB）
 | 问题 | 处理 |
 |------|------|
 | pthread / SharedArrayBuffer 失败 | 必须用带 COOP/COEP 的服务（`local_server.go` 或 nginx）；不要用 `file://` |
-| `EMSDK is not set` | 执行 `source emsdk_env.sh` |
+| `Emscripten is not installed` | 在 `emsdk/` 中执行 `./emsdk install 3.1.28 && ./emsdk activate 3.1.28` |
 | WebGPU 提示找不到 `dist/statics/ort/ort.webgpu.min.js` | 运行 `./scripts/prepare_webgpu_models.sh`，再重新 `./build.sh` |
 | 子模块为空 | `git submodule update --init --recursive` |
 | WebGPU 报 Shape mismatch / buffer reuse | 使用本仓库脚本导出的**固定尺寸** ONNX，不要用错误共用 `height`/`width` 符号维的动态模型 |
@@ -269,4 +260,3 @@ WebGPU 版 x2plus 由 `prepare_webgpu_models.sh` 一并导出（ONNX 约 67MB）
 ## License
 
 本仓库代码以 [BSD 3-Clause](LICENSE) 发布。第三方组件与模型请遵守各自许可证，详见 [NOTICE](NOTICE)。
-

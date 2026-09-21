@@ -4,8 +4,19 @@ set -e
 
 cd "$(dirname "$0")"
 
-if [ -z "$EMSDK" ]; then
-  echo "EMSDK is not set. Install emsdk and run: source ./emsdk_env.sh" >&2
+if [ ! -f ./emsdk/emsdk_env.sh ]; then
+  echo "Submodule emsdk missing. Run: git submodule update --init --recursive" >&2
+  exit 1
+fi
+PROJECT_ROOT=$(pwd)
+cd ./emsdk
+EMSDK_QUIET=1
+export EMSDK_QUIET
+. ./emsdk_env.sh >/dev/null
+cd "$PROJECT_ROOT"
+
+if [ ! -f "$EMSDK/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake" ]; then
+  echo "Emscripten is not installed. Run: cd emsdk && ./emsdk install 3.1.28 && ./emsdk activate 3.1.28" >&2
   exit 1
 fi
 
