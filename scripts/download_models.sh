@@ -15,9 +15,24 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 DEST="$ROOT/models"
 INCLUDE_WDN=0
+PYTHON="${PYTHON:-python3}"
 
 usage() {
     sed -n '2,10p' "$0"
+}
+
+file_size() {
+    wc -c < "$1" | tr -d '[:space:]'
+}
+
+# Fall back to Python's standard library when unzip is unavailable.
+extract_zip() {
+    local archive="$1" dest="$2"
+    if command -v unzip >/dev/null 2>&1; then
+        unzip -q "$archive" -d "$dest"
+    else
+        "$PYTHON" -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' "$archive" "$dest"
+    fi
 }
 
 for arg in "$@"; do
@@ -36,16 +51,15 @@ else
     echo "Missing download tool: install curl or wget." >&2
     exit 1
 fi
-if ! command -v unzip >/dev/null 2>&1; then
-    echo "Missing required command: unzip" >&2
+if ! command -v "$PYTHON" >/dev/null 2>&1; then
+    echo "Python interpreter not found: $PYTHON" >&2
+    echo "Set PYTHON=/path/to/python3 or install Python 3.9+." >&2
     exit 1
 fi
 
-mkdir -p "$DEST"
-
 download_if_needed() {
     local url="$1" out="$2"
-    if [[ -s "$out" ]] && (( $(stat -c '%s' "$out") > 1000 )); then
+    if [[ -s "$out" ]] && (( $(file_size "$out") > 1000 )); then
         echo "Skip $(basename "$out")"
         return
     fi
@@ -73,7 +87,7 @@ url="https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrga
 echo "Downloading official Ubuntu package for animevideov3 ..."
 download "$url" "$zip"
 mkdir -p "$extract"
-unzip -q "$zip" -d "$extract"
+extract_zip "$zip" "$extract"
 
 found=0
 while IFS= read -r -d '' model; do

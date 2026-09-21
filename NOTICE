@@ -29,7 +29,8 @@ Please follow their respective licenses when using models or code.
 
 - Project: https://github.com/microsoft/onnxruntime
 - License: MIT
-- Used for Route B (WebGPU). Vendored into `web/ort/` by `scripts/prepare_webgpu_models.ps1`
+- Used for Route B (WebGPU). Vendored into `web/ort/` by `scripts/prepare_webgpu_models.sh`,
+  then packaged into `dist/statics/ort/` by `build.sh`
 
 ## Models from community packages
 

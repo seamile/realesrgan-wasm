@@ -11,12 +11,20 @@ ONNX_DIR="$ROOT/web/models-onnx"
 ORT_DIR="$ROOT/web/ort"
 PYTHON="${PYTHON:-python3}"
 
-if ! command -v "$PYTHON" >/dev/null 2>&1; then
+python_ok() {
+    command -v "$PYTHON" >/dev/null 2>&1
+}
+
+file_size() {
+    wc -c < "$1" | tr -d '[:space:]'
+}
+
+if ! python_ok; then
     echo "Python interpreter not found: $PYTHON" >&2
     echo "Set PYTHON=/path/to/python3 or install Python 3.9+." >&2
     exit 1
 fi
-for command_name in npm unzip; do
+for command_name in npm; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
         echo "Missing required command: $command_name" >&2
         exit 1
@@ -36,7 +44,7 @@ mkdir -p "$WEIGHTS" "$ONNX_DIR" "$ORT_DIR"
 
 download_if_needed() {
     local url="$1" out="$2"
-    if [[ -s "$out" ]] && (( $(stat -c '%s' "$out") > 1000 )); then
+    if [[ -s "$out" ]] && (( $(file_size "$out") > 1000 )); then
         echo "Skip $(basename "$out")"
         return
     fi
@@ -111,9 +119,8 @@ fi
 find "$ORT_DIR" -maxdepth 1 -type f -delete
 cp -f "$ort_src/ort.webgpu.min.js" "$ORT_DIR/"
 [[ ! -f "$ort_src/ort.webgpu.min.js.map" ]] || cp -f "$ort_src/ort.webgpu.min.js.map" "$ORT_DIR/"
-shopt -s nullglob
 ort_wasm=("$ort_src"/ort-wasm-simd-threaded.*)
-if (( ${#ort_wasm[@]} == 0 )); then
+if [[ ! -e "${ort_wasm[0]}" ]]; then
     echo "No ort-wasm-simd-threaded.* files found in $ort_src" >&2
     exit 1
 fi

@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Real-ESRGAN ncnn WebAssembly</title>
-  <script src="wasmFeatureDetect.js"></script>
-  <script src="webgpu/realesrgan-webgpu.js"></script>
+  <script src="statics/wasmFeatureDetect.js"></script>
+  <script src="statics/webgpu/realesrgan-webgpu.js"></script>
   <style>
     :root {
       --bg: #0f1419;
@@ -157,8 +157,8 @@
     <div id="status" class="status">正在检测浏览器能力…</div>
     <progress id="progress" value="0" max="100"></progress>
     <p class="hint">
-      WebGPU 模型来自 <code>web/models-onnx/</code>（运行 <code>scripts/prepare_webgpu_models.sh (Linux) 或 scripts/prepare_webgpu_models.ps1 (Windows)</code> 生成）。
-      CPU 模型来自编译时打包的 <code>models/</code>。
+      WebGPU 模型位于 <code>models/</code>（运行 <code>./scripts/prepare_webgpu_models.sh</code> 生成源文件，再由 <code>./build.sh</code> 打包进 <code>dist/</code>）。
+      CPU 模型由编译时的 <code>models/</code> 预打包为 <code>models/*.data</code>。
     </p>
   </section>
 
@@ -318,7 +318,7 @@
     });
     modelSelect.disabled = models.length === 0;
     if (models.length === 0) {
-      setStatus("未找到 WebGPU ONNX 模型。请运行 scripts/prepare_webgpu_models.sh (Linux) 或 scripts/prepare_webgpu_models.ps1 (Windows)", "warn");
+      setStatus("未找到 WebGPU ONNX 模型。请运行 ./scripts/prepare_webgpu_models.sh，再重新运行 ./build.sh。", "warn");
       return;
     }
     let preferred = models.findIndex(m => m.name.indexOf("general-x4v3") >= 0);
@@ -376,10 +376,10 @@
         return;
       }
       const script = document.createElement("script");
-      script.src = "ort/ort.webgpu.min.js";
+      script.src = "statics/ort/ort.webgpu.min.js";
       script.async = true;
       script.onload = () => { ortScriptLoaded = true; resolve(); };
-      script.onerror = () => reject(new Error("未找到 ort/ort.webgpu.min.js，请运行 prepare_webgpu_models.sh（Linux）或 prepare_webgpu_models.ps1（Windows）"));
+      script.onerror = () => reject(new Error("未找到 statics/ort/ort.webgpu.min.js，请运行 ./scripts/prepare_webgpu_models.sh 后重新运行 ./build.sh"));
       document.body.appendChild(script);
     });
   }
@@ -414,16 +414,18 @@
           wasmReady = true;
           wasmLoading = false;
           resolve(true);
-        }
+        },
+        // Compiled artifacts live in statics/, preloaded models in models/.
+        locateFile: (path) => (/\.data$/.test(path) ? "models/" : "statics/") + path
       };
 
       setStatus("正在加载 CPU WASM 与模型资源…");
       const script = document.createElement("script");
       script.async = false;
-      script.src = "real-esrgan-ncnn-webassembly-simd-threads.js";
+      script.src = "statics/real-esrgan-ncnn-webassembly-simd-threads.js";
       script.onerror = () => {
         wasmLoading = false;
-        setStatus("未找到 CPU 编译产物，请先编译路线 A。", "warn");
+        setStatus("未找到 CPU 编译产物，请先运行构建脚本生成 dist/。", "warn");
         resolve(false);
       };
       document.body.appendChild(script);
@@ -434,7 +436,7 @@
     setStatus("正在初始化 WebGPU…");
     await loadOrtScript();
     if (!webgpuEngine) webgpuEngine = new RealESRGANWebGPU();
-    const list = await webgpuEngine.loadManifest("models-onnx/manifest.json");
+    const list = await webgpuEngine.loadManifest("models/manifest.json");
     // Touch session creation path lightly by ensuring ORT env is set, then probe adapter label.
     await webgpuEngine.ensureOrt();
     const gpuLabel = await webgpuEngine.getAdapterLabel();

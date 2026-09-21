@@ -82,4 +82,4 @@ fi
 cp -f "$OPT_PARAM" "$DEST/realesrgan-x2plus.param"
 cp -f "$OPT_BIN" "$DEST/realesrgan-x2plus.bin"
 echo "Installed to $DEST"
-stat -c '%n %s bytes' "$DEST/realesrgan-x2plus.param" "$DEST/realesrgan-x2plus.bin"
+wc -c "$DEST/realesrgan-x2plus.param" "$DEST/realesrgan-x2plus.bin"

@@ -1,6 +1,6 @@
 /**
  * Route B: Real-ESRGAN tiled inference via onnxruntime-web + WebGPU.
- * Expects global `ort` (from ort.webgpu.min.js) and models under ./models-onnx/.
+ * Expects global `ort` (from statics/ort/ort.webgpu.min.js) and models under ../models/.
  *
  * IMPORTANT: every tile must use the SAME fixed input spatial size.
  * ORT WebGPU buffer reuse breaks when run() sees changing dynamic shapes.
@@ -142,7 +142,7 @@
       if (!this.ortConfigured) {
         // Must be an absolute URL: ORT loads its .mjs via dynamic import(),
         // and bare relative specifiers like "ort/..." fail to resolve.
-        ort.env.wasm.wasmPaths = new URL("ort/", global.location.href).href;
+        ort.env.wasm.wasmPaths = new URL("statics/ort/", global.location.href).href;
         ort.env.wasm.numThreads = Math.min(4, navigator.hardwareConcurrency || 2);
         // Prefer dGPU when the browser honors it (currently ignored on Windows Chrome).
         ort.env.webgpu = ort.env.webgpu || {};
@@ -182,7 +182,7 @@
         try { await this.session.release(); } catch (_) {}
         this.session = null;
       }
-      const path = "models-onnx/" + model.file;
+      const path = "models/" + model.file;
       this.session = await ort.InferenceSession.create(path, {
         executionProviders: ["webgpu"],
         graphOptimizationLevel: "all"

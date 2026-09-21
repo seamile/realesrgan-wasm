@@ -1,13 +1,17 @@
 package main
 
 import (
+	"mime"
 	"net/http"
 )
 
 func main() {
-	fs := http.FileServer(http.Dir("./web"))
+	// Some systems lack a .wasm entry in /etc/mime.types; streaming compile needs it.
+	mime.AddExtensionType(".wasm", "application/wasm")
+
+	fs := http.FileServer(http.Dir("./dist"))
 	http.Handle("/", cors(fs))
-	println("listen on :8000")
+	println("listen on :8000 (serving ./dist)")
 	http.ListenAndServe("0.0.0.0:8000", nil)
 }
 

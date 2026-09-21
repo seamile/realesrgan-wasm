@@ -20,30 +20,34 @@ English: see [README_EN.md](README_EN.md)
 - 浏览器本地推理（需较新的桌面 Chrome / Edge / Firefox）
 - **自动扫描** `models/`：放入成对的 `.param` + `.bin`，重新编译后即可选择
 - 分块（tile）推理 + 进度条
-- WebGPU / CPU 后端切换；Windows 双显卡可提示核显问题
+- WebGPU / CPU 后端切换；状态栏显示当前 WebGPU 适配器
 
 ## 仓库结构（精简）
 
 ```
 ├── main.cpp / realesrgan.* / shape_layer.*   # 路线 A C++ 推理
-├── CMakeLists.txt / build.ps1 / build.sh     # Emscripten 构建
-├── local_server.go                           # 带 COOP/COEP 的本地静态服务器
+├── CMakeLists.txt / build.sh                 # Emscripten 构建 + 组装 dist/
+├── local_server.go                           # 服务 dist/ 的本地静态服务器（含 COOP/COEP）
 ├── ncnn/                                     # Git 子模块
-├── models/                                   # CPU ncnn 模型（权重不进 Git）
-├── web/
+├── models/                                   # CPU ncnn 模型源（权重不进 Git，编译时打进 .data）
+├── web/                                      # 网页源码与 WebGPU 生成资源（发布输入，不直接部署）
 │   ├── index.html                            # 前端
 │   ├── wasmFeatureDetect.js
 │   ├── webgpu/realesrgan-webgpu.js           # 路线 B 引擎
 │   ├── models-onnx/                          # WebGPU ONNX（.onnx 不进 Git）
 │   └── ort/                                  # onnxruntime-web 静态资源（不进 Git）
+├── dist/                                     # 构建产物：自包含站点（不进 Git，可直接部署）
+│   ├── index.html
+│   ├── statics/                              # 脚本、WASM、pthread worker、ORT
+│   └── models/                               # manifest.json、ONNX、CPU .data
 └── scripts/
-    ├── download_models.ps1 / .sh             # 下载默认小模型（Windows / Linux）
-    ├── prepare_webgpu_models.ps1 / .sh       # 导出 ONNX + 安装 ORT
-    ├── convert_x2plus.ps1 / .sh              # 转换 x2plus -> ncnn
+    ├── download_models.sh                    # 下载默认小模型
+    ├── prepare_webgpu_models.sh              # 导出 ONNX + 安装 ORT
+    ├── convert_x2plus.sh                     # 转换 x2plus -> ncnn
     └── pytorch2onnx_*.py
 ```
 
-**不会提交到 Git 的大文件**（由脚本生成）：模型权重、WASM `.data`、ONNX、`web/ort/`、`node_modules/`、`build/`。
+**不会提交到 Git 的大文件**（由脚本生成）：模型权重、WASM `.data`、ONNX、`web/ort/`、`dist/`、`node_modules/`、`build/`。
 
 ---
 
@@ -52,30 +56,30 @@ English: see [README_EN.md](README_EN.md)
 | 依赖 | 用途 | 备注 |
 |------|------|------|
 | Git | 克隆仓库 + 子模块 | 需能访问 GitHub |
-| [Emscripten](https://emscripten.org/) 3.1.28+ | 编译路线 A | Windows 见下方安装示例 |
+| [Emscripten](https://emscripten.org/) 3.1.28+ | 编译路线 A | Linux / macOS 见下方安装示例 |
 | CMake 3.10+ | 构建 | |
 | Ninja（推荐） | 加快编译 | `pip install ninja` 即可 |
-| Go 1.18+（可选） | `local_server.go` | 也可用其它能加 COOP/COEP 头的静态服务器 |
+| Go 1.18+（可选） | `local_server.go` | 也可用 nginx 等能加 COOP/COEP 头的静态服务器 |
 | Python 3.9+ + PyTorch（可选） | 仅准备 WebGPU ONNX / 转换 x2plus 时需要 | |
 | Node.js 18+ / npm（可选） | 仅准备 WebGPU 时安装 onnxruntime-web | |
-| curl 或 wget、unzip（Linux） | Linux脚本下载和解压模型 | |
+| curl 或 wget | 下载模型与 ORT 资源 | macOS 无需额外安装 `unzip` |
 | 浏览器 | Chrome / Edge（WebGPU）或支持 WASM SIMD+pthread 的桌面浏览器 | **不支持 iOS** |
 
-### Windows 安装 Emscripten
+### 安装 Emscripten（Linux / macOS）
 
-```powershell
+```bash
 git clone https://github.com/emscripten-core/emsdk.git
 cd emsdk
-.\emsdk install 3.1.28
-.\emsdk activate 3.1.28
-.\emsdk_env.ps1   # 每个新终端都要执行一次，或写入配置文件
+./emsdk install 3.1.28
+./emsdk activate 3.1.28
+source ./emsdk_env.sh   # 每个新终端都要执行一次，或写入 shell 配置
 ```
 
 确认：
 
-```powershell
+```bash
 emcc -v
-echo $env:EMSDK
+echo $EMSDK
 ```
 
 ---
@@ -86,26 +90,18 @@ echo $env:EMSDK
 
 ### 1. 克隆并拉取子模块
 
-```powershell
+```bash
 git clone --recursive https://github.com/panmeibing/real-esrgan-ncnn-webassembly.git
 cd real-esrgan-ncnn-webassembly
 ```
 
 若已克隆但未拉子模块：
 
-```powershell
+```bash
 git submodule update --init --recursive
 ```
 
 ### 2. 下载默认 CPU 小模型
-
-Windows PowerShell：
-
-```powershell
-powershell -File .\scripts\download_models.ps1
-```
-
-Linux：
 
 ```bash
 ./scripts/download_models.sh
@@ -118,63 +114,57 @@ Linux：
 
 可选：
 
-- Windows：`powershell -File .\scripts\download_models.ps1 -IncludeWdn`
-- Linux：`./scripts/download_models.sh --include-wdn`
+- `./scripts/download_models.sh --include-wdn`
 
 额外下载 wdn 变体。
 
 > 大模型 `realesrgan-x2plus` **不要**直接下 HF 粗转包（可能含 `Shape` 层）。请用官方转换脚本（见下文「可选：x2plus」）。
 
-### 3. 编译路线 A（CPU WASM）
+### 3. 准备路线 B（WebGPU 发布资源）
 
-先激活 emsdk，再：
-
-```powershell
-powershell -File .\build.ps1
-```
-
-成功后 `web/` 下会出现：
-
-- `real-esrgan-ncnn-webassembly-simd-threads.js / .wasm / .data / .worker.js`
-
-Linux / macOS：
-
-```bash
-source /path/to/emsdk/emsdk_env.sh
-sh build.sh
-```
-
-### 4.（可选）准备路线 B（WebGPU）
-
-需要 Python + PyTorch + Node.js。Windows：
-
-```powershell
-powershell -File .\scripts\prepare_webgpu_models.ps1
-```
-
-Linux：
+首次构建 `dist/` 前，需要 Python + PyTorch + Node.js 生成 ONNX 和 ORT 资源：
 
 ```bash
 ./scripts/prepare_webgpu_models.sh
 ```
 
-会：
+该脚本会：
 
 1. 下载官方 `.pth`
 2. 导出**固定尺寸** ONNX 到 `web/models-onnx/`
 3. `npm install onnxruntime-web`，复制运行时到 `web/ort/`
 
-无 GPU 也可跳过本步；页面会自动走 CPU。
+资源已生成时无需每次重复执行；`build.sh` 只负责校验并打包它们。
+
+### 4. 编译路线 A 并组装发布站点
+
+先激活 emsdk，再：
+
+```bash
+source /path/to/emsdk/emsdk_env.sh
+./build.sh
+```
+
+构建成功后会在项目根目录组装出自包含的发布目录 `dist/`：
+
+```text
+dist/
+├── index.html
+├── statics/   # wasmFeatureDetect.js、webgpu/、ort/，以及 real-esrgan-ncnn-webassembly-simd-threads.js / .wasm / .worker.js
+└── models/    # manifest.json、*.onnx、real-esrgan-ncnn-webassembly-simd-threads.data
+```
+
+`dist/` 可以脱离源码独立移动和部署。若缺少 ORT 或 ONNX 资源，脚本会在覆盖旧 `dist/` 之前直接报错并提示先运行准备脚本。
 
 ### 5. 启动本地服务器并打开页面
 
 **必须**使用带 COOP/COEP 响应头的服务器，否则 WASM 多线程无法启用：
 
-```powershell
-go run local_server.go
+```bash
+go run local_server.go   # 服务 ./dist，监听 0.0.0.0:8000
 ```
 
-浏览器打开：**http://localhost:8000**
+浏览器打开：**http://localhost:8000**。若改用 nginx 直接托管 `dist/`，则不需要 Go（见下文「部署到 nginx」）。
 
 建议：
 
@@ -184,33 +174,54 @@ go run local_server.go
 
 ---
 
-## Windows 双显卡（核显 vs 独显）
+## 部署到 nginx
 
-Chrome 在 Windows 上常把 WebGPU 绑在**核显**，并**忽略** `powerPreference`（见 [crbug 369219127](https://crbug.com/369219127)）。核显上 WebGPU 可能比 CPU 还慢。
+`dist/` 是自包含站点，可直接作为 nginx 的站点根目录，**不需要**再运行 Go 服务器：
 
-强制使用独显（改完后完全退出并重启 Chrome）：
+```nginx
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name example.com;
 
-1. 打开 `chrome://flags/#force-high-performance-gpu` -> **Enabled** -> Relaunch
-2. 或：系统设置 -> 显示 -> 图形 -> 为 `chrome.exe` 选择「高性能」
-3. 或：NVIDIA 控制面板 -> 程序设置 -> Chrome -> 高性能 NVIDIA 处理器
+    ssl_certificate     /etc/nginx/ssl/example.pem;
+    ssl_certificate_key /etc/nginx/ssl/example.key;
 
-页面状态栏会显示当前 WebGPU 适配器名称，便于确认。
+    root /var/www/real-esrgan;   # 指向 dist/ 的内容
+    index index.html;
+
+    # WASM 多线程（SharedArrayBuffer）必需，缺失时 CPU 后端无法启用多线程
+    add_header Cross-Origin-Opener-Policy "same-origin" always;
+    add_header Cross-Origin-Embedder-Policy "require-corp" always;
+    add_header Cross-Origin-Resource-Policy "same-origin" always;
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+}
+```
+
+要点：
+
+- 页面处于 `crossOriginIsolated` 状态是 CPU WASM pthread 的前提，三个响应头缺一不可。
+- `.wasm` 需由 nginx 返回 `application/wasm`（默认 `mime.types` 一般已包含）；否则 WASM 会退化为非流式编译。
+- nginx 运行用户必须能读取 `dist/`。若放在用户家目录下，还要保证上级目录具备执行权限，否则会 403；更稳妥的做法是把内容复制到 `/var/www/` 下。
+- 改完执行 `nginx -t && systemctl reload nginx`。
 
 ---
 
 ## 可选：转换 `realesrgan-x2plus`（CPU ncnn）
 
-```powershell
+```bash
 # 1) 下载官方权重到 _convert/RealESRGAN_x2plus.pth
 # 2) 准备 onnx2ncnn / ncnnoptimize
-#    Linux脚本从 PATH 查找，也可通过 NCNN_ONNX2NCNN / NCNNOPTIMIZE 指定路径。
+#    脚本从 PATH 查找，也可通过 NCNN_ONNX2NCNN / NCNNOPTIMIZE 指定路径。
 # 3) 运行：
-powershell -File .\scripts\convert_x2plus.ps1
-# Linux：./scripts/convert_x2plus.sh
-# 4) 重新 build.ps1 或 build.sh
+./scripts/convert_x2plus.sh
+# 4) 重新 ./build.sh
 ```
 
-WebGPU 版 x2plus 由 `prepare_webgpu_models.ps1` 一并导出（ONNX 约 67MB）。
+WebGPU 版 x2plus 由 `prepare_webgpu_models.sh` 一并导出（ONNX 约 67MB）。
 
 ---
 
@@ -220,7 +231,7 @@ WebGPU 版 x2plus 由 `prepare_webgpu_models.ps1` 一并导出（ONNX 约 67MB�
 
 1. 准备成对的 `name.param` + `name.bin`（ncnn 格式，建议输入/输出为 `data`/`output`）
 2. 放入 `models/`（文件名带 `x2`/`x3`/`x4`/`x2plus` 便于识别倍率）
-3. 重新 `build.ps1`
+3. 重新运行 `./build.sh`
 4. 刷新页面
 
 详见 [`models/README.md`](models/README.md)。
@@ -229,7 +240,7 @@ WebGPU 版 x2plus 由 `prepare_webgpu_models.ps1` 一并导出（ONNX 约 67MB�
 
 1. 导出固定输入尺寸 ONNX（与 tile 尺寸一致，见 `scripts/pytorch2onnx_webgpu.py`）
 2. 放入 `web/models-onnx/`，更新 `manifest.json`
-3. 刷新页面（无需重编 WASM）
+3. 重新运行 `./build.sh`（把 ONNX 打包进 `dist/models/`），刷新页面
 
 ---
 
@@ -237,12 +248,12 @@ WebGPU 版 x2plus 由 `prepare_webgpu_models.ps1` 一并导出（ONNX 约 67MB�
 
 | 问题 | 处理 |
 |------|------|
-| pthread / SharedArrayBuffer 失败 | 必须用 `local_server.go`（或自建 COOP/COEP）；不要用 `file://` |
-| `EMSDK is not set` | 执行 `emsdk_env.ps1` / `source emsdk_env.sh` |
-| WebGPU提示找不到 `ort/ort.webgpu.min.js` | Linux运行 `./scripts/prepare_webgpu_models.sh`；Windows运行对应 `.ps1` |
+| pthread / SharedArrayBuffer 失败 | 必须用带 COOP/COEP 的服务（`local_server.go` 或 nginx）；不要用 `file://` |
+| `EMSDK is not set` | 执行 `source emsdk_env.sh` |
+| WebGPU 提示找不到 `dist/statics/ort/ort.webgpu.min.js` | 运行 `./scripts/prepare_webgpu_models.sh`，再重新 `./build.sh` |
 | 子模块为空 | `git submodule update --init --recursive` |
 | WebGPU 报 Shape mismatch / buffer reuse | 使用本仓库脚本导出的**固定尺寸** ONNX，不要用错误共用 `height`/`width` 符号维的动态模型 |
-| ORT 找不到 `.mjs` | 重新运行 `prepare_webgpu_models.ps1`，确保 `web/ort/` 含全部 `ort-wasm-simd-threaded.*` |
+| ORT 找不到 `.mjs` | 重新运行 `./scripts/prepare_webgpu_models.sh`，确保 `web/ort/` 含全部 `ort-wasm-simd-threaded.*`，再重新 `./build.sh` |
 | 首次加载很慢 / 内存爆 | `models/` 里大模型会打进 `.data`；生产环境只保留小模型再编译 |
 | 中国大陆拉 GitHub 失败 | 配置代理 / VPN 后再拉子模块与模型 |
 
