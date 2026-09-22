@@ -62,6 +62,12 @@ if [[ ! -f "$x2pth" ]]; then
     download_if_needed "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth" "$x2pth"
 fi
 
+# x4 RRDBNet weights. Note the release-tag split: RealESRGAN_x4plus.pth only
+# exists under v0.1.0 (asking v0.2.2.4 for it returns 404), while the anime
+# 6-block variant only exists under v0.2.2.4.
+download_if_needed "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth" "$WEIGHTS/RealESRGAN_x4plus.pth"
+download_if_needed "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.2.4/RealESRGAN_x4plus_anime_6B.pth" "$WEIGHTS/RealESRGAN_x4plus_anime_6B.pth"
+
 # Fixed spatial sizes are required by ORT WebGPU buffer reuse.
 find "$ONNX_DIR" -maxdepth 1 -type f -name '*.onnx' -delete
 
@@ -90,17 +96,91 @@ export_onnx realesr-general-x4v3.onnx \
 export_onnx realesrgan-x2plus.onnx \
     --arch rrdb --input "$x2pth" \
     --output "$ONNX_DIR/realesrgan-x2plus.onnx" --scale 2 --num-block 23 --size 84
+# x4plus: same 23-block RRDB body as x2plus but scale=4, so the body runs at the
+# full tile resolution (no pixel_unshuffle) -> ~4x the body activations of x2plus.
+export_onnx realesrgan-x4plus.onnx \
+    --arch rrdb --input "$WEIGHTS/RealESRGAN_x4plus.pth" \
+    --output "$ONNX_DIR/realesrgan-x4plus.onnx" --scale 4 --num-block 23 --size 84
+# x4plus-anime is the 6-block ("6B") RRDB variant: --num-block 6 is required.
+export_onnx realesrgan-x4plus-anime.onnx \
+    --arch rrdb --input "$WEIGHTS/RealESRGAN_x4plus_anime_6B.pth" \
+    --output "$ONNX_DIR/realesrgan-x4plus-anime.onnx" --scale 4 --num-block 6 --size 84
 
 cat > "$ONNX_DIR/manifest.json" <<'JSON'
 {
   "version": 1,
   "backend": "webgpu",
   "models": [
-    {"name":"realesr-animevideov3-x2","file":"realesr-animevideov3-x2.onnx","scale":2,"input":"data","output":"output","tilesize":128,"prepadding":10,"align":1},
-    {"name":"realesr-animevideov3-x3","file":"realesr-animevideov3-x3.onnx","scale":3,"input":"data","output":"output","tilesize":128,"prepadding":10,"align":1},
-    {"name":"realesr-animevideov3-x4","file":"realesr-animevideov3-x4.onnx","scale":4,"input":"data","output":"output","tilesize":128,"prepadding":10,"align":1},
-    {"name":"realesr-general-x4v3","file":"realesr-general-x4v3.onnx","scale":4,"input":"data","output":"output","tilesize":128,"prepadding":10,"align":1},
-    {"name":"realesrgan-x2plus","file":"realesrgan-x2plus.onnx","scale":2,"input":"data","output":"output","tilesize":64,"prepadding":10,"align":2}
+    {
+      "name": "realesr-animevideov3-x2",
+      "file": "realesr-animevideov3-x2.onnx",
+      "scale": 2,
+      "input": "data",
+      "output": "output",
+      "tilesize": 128,
+      "prepadding": 10,
+      "align": 1
+    },
+    {
+      "name": "realesr-animevideov3-x3",
+      "file": "realesr-animevideov3-x3.onnx",
+      "scale": 3,
+      "input": "data",
+      "output": "output",
+      "tilesize": 128,
+      "prepadding": 10,
+      "align": 1
+    },
+    {
+      "name": "realesr-animevideov3-x4",
+      "file": "realesr-animevideov3-x4.onnx",
+      "scale": 4,
+      "input": "data",
+      "output": "output",
+      "tilesize": 128,
+      "prepadding": 10,
+      "align": 1
+    },
+    {
+      "name": "realesr-general-x4v3",
+      "file": "realesr-general-x4v3.onnx",
+      "scale": 4,
+      "input": "data",
+      "output": "output",
+      "tilesize": 128,
+      "prepadding": 10,
+      "align": 1
+    },
+    {
+      "name": "realesrgan-x2plus",
+      "file": "realesrgan-x2plus.onnx",
+      "scale": 2,
+      "input": "data",
+      "output": "output",
+      "tilesize": 64,
+      "prepadding": 10,
+      "align": 2
+    },
+    {
+      "name": "realesrgan-x4plus",
+      "file": "realesrgan-x4plus.onnx",
+      "scale": 4,
+      "input": "data",
+      "output": "output",
+      "tilesize": 64,
+      "prepadding": 10,
+      "align": 1
+    },
+    {
+      "name": "realesrgan-x4plus-anime",
+      "file": "realesrgan-x4plus-anime.onnx",
+      "scale": 4,
+      "input": "data",
+      "output": "output",
+      "tilesize": 64,
+      "prepadding": 10,
+      "align": 1
+    }
   ]
 }
 JSON

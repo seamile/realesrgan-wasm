@@ -130,6 +130,12 @@ than serving it from a home directory), then run `nginx -t && systemctl reload n
 - **CPU:** put `.param`+`.bin` in `models/`, then re-run `./build.sh`.
 - **WebGPU:** put fixed-shape `.onnx` under `web/models-onnx/`, update `manifest.json`, then re-run `./build.sh`.
 
+`prepare_webgpu_models.sh` exports `realesr-animevideov3-x2/x3/x4`, `realesr-general-x4v3`,
+`realesrgan-x2plus` (~67MB), `realesrgan-x4plus` (~67MB) and `realesrgan-x4plus-anime` (~18MB).
+`build.sh` copies all of them into `dist/models/`; delete the large ones you do not ship before building.
+`realesrgan-x4plus` skips `pixel_unshuffle`, so its RRDB body runs at full tile resolution — about
+4x the body activations of x2plus at the same `tilesize`.
+
 Weights and build artifacts are gitignored; see scripts under `scripts/`.
 
 ## License

@@ -128,6 +128,8 @@ git submodule update --init --recursive
 2. 导出**固定尺寸** ONNX 到 `web/models-onnx/`
 3. `npm install onnxruntime-web`，复制运行时到 `web/ort/`
 
+导出的 WebGPU 模型：`realesr-animevideov3-x2/x3/x4`、`realesr-general-x4v3`、`realesrgan-x2plus`（约 67MB）、`realesrgan-x4plus`（约 67MB）、`realesrgan-x4plus-anime`（约 18MB）。`build.sh` 会把它们**全量**拷进 `dist/models/`，不需要的大模型请在生成后删掉再编译。
+
 资源已生成时无需每次重复执行；`build.sh` 只负责校验并打包它们。
 
 ### 4. 编译路线 A 并组装发布站点
@@ -241,7 +243,7 @@ server {
 # 4) 重新 ./build.sh
 ```
 
-WebGPU 版 x2plus 由 `prepare_webgpu_models.sh` 一并导出（ONNX 约 67MB）。
+WebGPU 版 x2plus / x4plus / x4plus-anime 由 `prepare_webgpu_models.sh` 一并导出（x2plus、x4plus 各约 67MB，x4plus-anime 约 18MB）。
 
 ---
 

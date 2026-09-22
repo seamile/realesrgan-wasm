@@ -18,10 +18,28 @@ RealESRGAN::RealESRGAN()
 {
     std::cout << "cpu count: " << ncnn::get_big_cpu_count() << std::endl;
     ncnn::set_cpu_powersave(2);
-    ncnn::set_omp_num_threads(ncnn::get_big_cpu_count());
+
+#ifdef __EMSCRIPTEN__
+    // WebAssembly: keep ncnn single-threaded.
+    //
+    // The only OpenMP runtime available for Emscripten here is ncnn's own
+    // simpleomp. With it, the multi-threaded x86 winograd convolution kernels
+    // (src/layer/x86/convolution_3x3_winograd.h) produce wrong results, which
+    // shows up as NaN / garbled pixels for realesrgan-x4plus and
+    // realesrgan-x4plus-anime (the models that actually select winograd).
+    // Single-threaded execution is verified correct and, for the 64x64 tile
+    // pipeline used here, as fast as the (broken) multi-threaded path; the
+    // multi-threaded configurations that stay correct (winograd disabled) are
+    // about 3x slower. Native builds keep using all cores.
+    const int cpu_threads = 1;
+#else
+    const int cpu_threads = ncnn::get_big_cpu_count();
+#endif
+
+    ncnn::set_omp_num_threads(cpu_threads);
 
     net.opt = ncnn::Option();
-    net.opt.num_threads = ncnn::get_big_cpu_count();
+    net.opt.num_threads = cpu_threads;
     net.opt.use_vulkan_compute = false;
 
     scale = 4;

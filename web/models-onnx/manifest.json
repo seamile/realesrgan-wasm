@@ -51,6 +51,26 @@
       "tilesize": 64,
       "prepadding": 10,
       "align": 2
+    },
+    {
+      "name": "realesrgan-x4plus",
+      "file": "realesrgan-x4plus.onnx",
+      "scale": 4,
+      "input": "data",
+      "output": "output",
+      "tilesize": 64,
+      "prepadding": 10,
+      "align": 1
+    },
+    {
+      "name": "realesrgan-x4plus-anime",
+      "file": "realesrgan-x4plus-anime.onnx",
+      "scale": 4,
+      "input": "data",
+      "output": "output",
+      "tilesize": 64,
+      "prepadding": 10,
+      "align": 1
     }
   ]
 }
