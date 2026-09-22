@@ -205,6 +205,8 @@
   var activeBackend = null; // "webgpu" | "cpu"
   var webgpuEngine = null;
   var webgpuOk = false;
+  var webgpuReason = "";
+  var backendError = ""; // last backend-activation failure, surfaced to the user
   var ortScriptLoaded = false;
 
   const statusEl = document.getElementById("status");
@@ -468,14 +470,16 @@
     try {
       if (want === "cpu") {
         await activateCpu();
+        backendError = "";
         return;
       }
       if (want === "webgpu" || want === "auto") {
         if (!webgpuOk) {
-          if (want === "webgpu") throw new Error("浏览器不支持 WebGPU");
+          if (want === "webgpu") throw new Error(webgpuReason || "未检测到可用的 WebGPU 适配器");
         } else {
           try {
             await activateWebGpu();
+            backendError = "";
             return;
           } catch (e) {
             console.warn("WebGPU init failed, fallback to CPU", e);
@@ -484,10 +488,22 @@
         }
       }
       await activateCpu();
+      backendError = "";
     } catch (e) {
       console.error(e);
-      setStatus(String(e.message || e), "warn");
-      btnProcess.disabled = true;
+      const reason = String(e.message || e);
+      if (activeBackend) {
+        // A previously activated backend is still usable: keep the dropdown
+        // honest about which engine actually runs, and say what happened.
+        const label = activeBackend === "cpu" ? "CPU WASM" : "WebGPU";
+        backendError = "";
+        backendSelect.value = activeBackend;
+        setStatus("后端不可用：" + reason + "。已保持 " + label + " 后端。", "warn");
+      } else {
+        backendError = reason;
+        setStatus("后端不可用：" + reason + "。请在上方切换到其它后端，或重启浏览器后再试。", "warn");
+      }
+      btnProcess.disabled = !canProcess();
     }
   }
 
@@ -497,7 +513,11 @@
     if (webgpuOk) {
       setStatus("检测到 WebGPU，优先使用 GPU 加速…");
     } else {
-      setStatus("未检测到 WebGPU，将使用 CPU WASM…");
+      // Remember why, so "强制 WebGPU" can explain itself instead of going silent.
+      webgpuReason = !navigator.gpu
+        ? "浏览器未提供 WebGPU（navigator.gpu 不存在）"
+        : "requestAdapter() 未返回适配器（GPU 进程异常或被禁用，建议重启浏览器）";
+      setStatus("未检测到 WebGPU（" + webgpuReason + "），将使用 CPU WASM…");
     }
     await selectBackend(backendSelect.value);
   }
@@ -528,7 +548,11 @@
         btnSave.disabled = true;
         btnProcess.disabled = !canProcess();
         const maxSide = Math.max(currentW, currentH);
-        if (maxSide > 1024) {
+        if (backendError) {
+          // Do not overwrite a backend failure with "click 开始超分": the button
+          // is disabled in that state, so the click would silently do nothing.
+          setStatus("后端不可用：" + backendError + "。请在上方切换到其它后端后重试。", "warn");
+        } else if (maxSide > 1024) {
           setStatus("图片 " + currentW + "x" + currentH + "，较长边较大，处理可能较慢。", "warn");
         } else {
           setStatus("已加载 " + currentW + "x" + currentH + "，点击开始超分。");
@@ -549,6 +573,12 @@
       setStatus("请先选择图片。", "warn");
       return;
     }
+    if (!canProcess()) {
+      setStatus(backendError
+        ? "后端不可用：" + backendError + "。请在上方切换到其它后端后重试。"
+        : "处理引擎尚未就绪，请稍候；若一直如此，请刷新页面或切换后端。", "warn");
+      return;
+    }
 
     currentScale = m.scale;
     syncModelUi();
@@ -561,7 +591,20 @@
     canvasOutput.height = currentH * m.scale;
 
     if (activeBackend === "webgpu") {
-      setStatus("启动 WebGPU 处理：" + m.name + " …");
+      setStatus("启动 WebGPU 处理：" + m.name + " …（首次需加载 WASM、模型与 GPU 管线，请稍候）");
+      // Session creation reports no progress, so tick elapsed seconds; a slow or
+      // stuck init must not look like "the button did nothing".
+      const startedAt = Date.now();
+      let seenPct = -1;
+      const beat = setInterval(() => {
+        const pct = Math.round(progressEl.value);
+        if (pct === seenPct) {
+          const sec = Math.round((Date.now() - startedAt) / 1000);
+          setStatus("WebGPU 处理中… 已 " + sec + "s" +
+            (pct > 0 ? "（" + pct + "%）" : "（正在初始化 WASM / 模型 / GPU 管线）"));
+        }
+        seenPct = pct;
+      }, 3000);
       try {
         const result = await webgpuEngine.process(
           uploadImageData.data,
@@ -571,6 +614,7 @@
           (p) => {
             const pct = Math.ceil(p.progress_rate * 100);
             progressEl.value = pct;
+            seenPct = pct;
             const remain = Math.round((p.remaining_time || 0) / 1000);
             setStatus("本地 WebGPU 处理中… " + pct + "%（预计剩余约 " + remain + "s）");
           }
@@ -586,8 +630,10 @@
       } catch (e) {
         console.error(e);
         setStatus("WebGPU 失败：" + (e.message || e) + "。可切换到 CPU 后端重试。", "warn");
+      } finally {
+        clearInterval(beat);
+        btnProcess.disabled = false;
       }
-      btnProcess.disabled = false;
       return;
     }
 

@@ -8,6 +8,9 @@ import (
 func main() {
 	// Some systems lack a .wasm entry in /etc/mime.types; streaming compile needs it.
 	mime.AddExtensionType(".wasm", "application/wasm")
+	// Same for .mjs: ORT dynamic-imports it as a module script, and browsers
+	// reject a module script that is not served as JavaScript.
+	mime.AddExtensionType(".mjs", "text/javascript")
 
 	fs := http.FileServer(http.Dir("./dist"))
 	http.Handle("/", cors(fs))
