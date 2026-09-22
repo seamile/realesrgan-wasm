@@ -141,9 +141,11 @@ git submodule update --init --recursive
 ```text
 dist/
 ├── index.html
-├── statics/   # wasmFeatureDetect.js、webgpu/、ort/，以及 real-esrgan-ncnn-webassembly-simd-threads.js / .wasm / .worker.js
-└── models/    # manifest.json、*.onnx、real-esrgan-ncnn-webassembly-simd-threads.data
+├── statics/v<内容哈希>/   # wasmFeatureDetect.js、webgpu/、ort/，以及 real-esrgan-ncnn-webassembly-simd-threads.js / .wasm / .worker.js
+└── models/v<内容哈希>/    # manifest.json、*.onnx、real-esrgan-ncnn-webassembly-simd-threads.data
 ```
+
+`statics/` 与 `models/` 下各有一个按内容哈希命名的子目录（`v…`），`index.html` 只引用这些带版本号的路径：**资源内容一变，URL 就变**，因此浏览器缓存和 CDN（Cloudflare 等）都不可能拿上一次构建的响应来回答新构建。这一点对 CPU 后端是硬要求——静态资源通常被缓存 30 天，而缺少 `Cross-Origin-Embedder-Policy` 的旧响应会让 Chrome 拦截 pthread worker，页面就会卡在「正在加载 CPU WASM 与模型资源…」。内容没变时哈希不变，缓存依旧有效。
 
 `dist/` 可以脱离源码独立移动和部署。若缺少 ORT 或 ONNX 资源，脚本会在覆盖旧 `dist/` 之前直接报错并提示先运行准备脚本。
 
@@ -186,6 +188,27 @@ server {
     add_header Cross-Origin-Embedder-Policy "require-corp" always;
     add_header Cross-Origin-Resource-Policy "same-origin" always;
 
+    # 静态资源可长期缓存：URL 带内容哈希，新构建自然不会命中旧缓存。
+    # 注意 nginx 的 add_header 是「替换」而非「继承」——location 里一旦出现
+    # add_header，上面三个头就会全部丢失（Chrome 随即拦截同源 pthread worker，
+    # 报 ERR_BLOCKED_BY_RESPONSE / coep-frame-resource-needs-coep-header）。
+    # 所以这里用 expires（另一个模块），不要用 add_header Cache-Control。
+    location /statics/ {
+        expires 30d;
+        try_files $uri =404;
+    }
+
+    location /models/ {
+        expires 30d;
+        try_files $uri =404;
+    }
+
+    # 入口 HTML 必须每次校验，否则拿不到新构建的资源路径。
+    location = /index.html {
+        expires -1;
+        try_files $uri =404;
+    }
+
     location / {
         try_files $uri $uri/ =404;
     }
@@ -194,10 +217,16 @@ server {
 
 要点：
 
-- 页面处于 `crossOriginIsolated` 状态是 CPU WASM pthread 的前提，三个响应头缺一不可。
-- `.wasm` 需由 nginx 返回 `application/wasm`（默认 `mime.types` 一般已包含）；否则 WASM 会退化为非流式编译。
+- 页面处于 `crossOriginIsolated` 状态是 CPU WASM pthread 的前提，三个响应头缺一不可，且必须覆盖 `/statics/`、`/models/` 等所有路径（worker 脚本尤其需要）。
+- `.wasm` 需由 nginx 返回 `application/wasm`（默认 `mime.types` 一般已包含）；`.mjs` 必须返回 JavaScript（如 `application/javascript`），否则 ORT 的动态 `import()` 会被 MIME 校验拒绝。
 - nginx 运行用户必须能读取 `dist/`。若放在用户家目录下，还要保证上级目录具备执行权限，否则会 403；更稳妥的做法是把内容复制到 `/var/www/` 下。
 - 改完执行 `nginx -t && systemctl reload nginx`。
+
+### 前置 Cloudflare 时的注意事项
+
+- 静态资源会被 Cloudflare 边缘缓存；带内容哈希的 URL 天然绕过旧副本，但历史上被缓存的旧路径要等 TTL 或在后台 Purge Cache 才会消失。
+- 建议关闭该站点的 **Rocket Loader**：它会自行抓取并 eval 脚本，使 `document.currentScript` 为空，容易破坏 Emscripten 这类依赖脚本路径的加载器（前端已通过 `mainScriptUrlOrBlob` 兜底，但关掉更稳）。
+- 开页后可在控制台执行 `crossOriginIsolated` 自检，正常应为 `true`。
 
 ---
 
@@ -240,6 +269,7 @@ WebGPU 版 x2plus 由 `prepare_webgpu_models.sh` 一并导出（ONNX 约 67MB）
 | 问题 | 处理 |
 |------|------|
 | pthread / SharedArrayBuffer 失败 | 必须用带 COOP/COEP 的服务（`local_server.go` 或 nginx）；不要用 `file://` |
+| 切换「强制 CPU」后一直停在「正在加载 CPU WASM 与模型资源…」，控制台报 worker 被屏蔽 | 该资源响应缺少 COEP（常见于 CDN 边缘仍缓存着旧构建，或 nginx 的 `location` 里写了 `add_header` 覆盖掉三个隔离头）。前端已用内容哈希目录规避旧缓存；确认 `crossOriginIsolated === true`，必要时 Purge CDN 缓存 |
 | `Emscripten is not installed` | 在 `emsdk/` 中执行 `./emsdk install 3.1.28 && ./emsdk activate 3.1.28` |
 | WebGPU 提示找不到 `dist/statics/ort/ort.webgpu.min.js` | 运行 `./scripts/prepare_webgpu_models.sh`，再重新 `./build.sh` |
 | 子模块为空 | `git submodule update --init --recursive` |

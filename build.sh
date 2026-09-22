@@ -107,17 +107,92 @@ cp -f "$BUILD/$ARTIFACT.data" "$TMP_DIST/models/"
 cp -f "$ONNX_DIR/manifest.json" "$TMP_DIST/models/"
 cp -f "$ONNX_DIR"/*.onnx "$TMP_DIST/models/"
 
+# --- Cache-busting version directories -------------------------------------
+# CDNs (Cloudflare in front of 4x.pixcc.net) and browsers cache statics/ and
+# models/ for 30 days. Reusing the same URLs across deploys therefore keeps
+# serving the previous build -- including copies cached before the origin sent
+# COOP/COEP/CORP, which makes Chrome block the Emscripten pthread worker with
+# "coep-frame-resource-needs-coep-header"; CPU WASM then never initializes and
+# the page sticks on "正在加载 CPU WASM 与模型资源…". Deriving a directory name
+# from the file contents gives every changed build its own URLs, so no cache
+# can answer a request for the new build with an old response.
+HASH_CMD=""
+if command -v sha256sum >/dev/null 2>&1; then
+  HASH_CMD="sha256sum"
+elif command -v shasum >/dev/null 2>&1; then
+  HASH_CMD="shasum -a 256"
+elif command -v openssl >/dev/null 2>&1; then
+  HASH_CMD="openssl dgst -sha256"
+fi
+
+content_id() {
+  if [ -n "$HASH_CMD" ]; then
+    ( cd "$1" && find . -type f -print | LC_ALL=C sort | while IFS= read -r f; do printf '%s\0' "$f"; cat "$f"; done ) \
+      | $HASH_CMD \
+      | awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^[0-9a-f][0-9a-f]+$/) { print substr($i, 1, 12); exit } }'
+  else
+    # POSIX fallback: cksum exists on every Linux/macOS box.
+    ( cd "$1" && find . -type f -print | LC_ALL=C sort | while IFS= read -r f; do printf '%s ' "$f"; cksum < "$f"; done ) \
+      | cksum | awk '{print $1 "-" $2}'
+  fi
+}
+
+version_dir() {
+  parent=$1
+  version=$2
+  mkdir -p "$parent/$version"
+  for entry in "$parent"/*; do
+    if [ "$entry" = "$parent/$version" ]; then
+      continue
+    fi
+    mv "$entry" "$parent/$version/"
+  done
+}
+
+rewrite_asset_paths() {
+  sed -e "s|\"statics/|\"statics/$STATIC_DIR/|g" \
+      -e "s|\"models/|\"models/$MODEL_DIR/|g" "$1" > "$1.tmp"
+  mv "$1.tmp" "$1"
+}
+
+check_versions() {
+  file=$1
+  for pair in "statics:$STATIC_DIR" "models:$MODEL_DIR"; do
+    prefix=${pair%%:*}
+    version=${pair##*:}
+    total=$(grep -o "\"$prefix/" "$file" | wc -l | tr -d ' ')
+    versioned=$(grep -o "\"$prefix/$version/" "$file" | wc -l | tr -d ' ')
+    if [ "$total" != "$versioned" ]; then
+      echo "Unversioned \"$prefix/ URL left in $file ($versioned of $total versioned)." >&2
+      exit 1
+    fi
+  done
+}
+
+STATIC_DIR="v$(content_id "$TMP_DIST/statics")"
+MODEL_DIR="v$(content_id "$TMP_DIST/models")"
+
+version_dir "$TMP_DIST/statics" "$STATIC_DIR"
+version_dir "$TMP_DIST/models" "$MODEL_DIR"
+
+# Rewrite only quoted URL prefixes, so prose that mentions statics/ or models/
+# (the hints paragraph) is left alone; every loadable path is written quoted.
+rewrite_asset_paths "$TMP_DIST/index.html"
+rewrite_asset_paths "$TMP_DIST/statics/$STATIC_DIR/webgpu/realesrgan-webgpu.js"
+check_versions "$TMP_DIST/index.html"
+check_versions "$TMP_DIST/statics/$STATIC_DIR/webgpu/realesrgan-webgpu.js"
+
 for asset in \
   index.html \
-  statics/wasmFeatureDetect.js \
-  statics/webgpu/realesrgan-webgpu.js \
-  statics/ort/ort.webgpu.min.js \
-  statics/ort/ort-wasm-simd-threaded.asyncify.wasm \
-  statics/real-esrgan-ncnn-webassembly-simd-threads.js \
-  statics/real-esrgan-ncnn-webassembly-simd-threads.wasm \
-  statics/real-esrgan-ncnn-webassembly-simd-threads.worker.js \
-  models/manifest.json \
-  models/real-esrgan-ncnn-webassembly-simd-threads.data; do
+  "statics/$STATIC_DIR/wasmFeatureDetect.js" \
+  "statics/$STATIC_DIR/webgpu/realesrgan-webgpu.js" \
+  "statics/$STATIC_DIR/ort/ort.webgpu.min.js" \
+  "statics/$STATIC_DIR/ort/ort-wasm-simd-threaded.asyncify.wasm" \
+  "statics/$STATIC_DIR/real-esrgan-ncnn-webassembly-simd-threads.js" \
+  "statics/$STATIC_DIR/real-esrgan-ncnn-webassembly-simd-threads.wasm" \
+  "statics/$STATIC_DIR/real-esrgan-ncnn-webassembly-simd-threads.worker.js" \
+  "models/$MODEL_DIR/manifest.json" \
+  "models/$MODEL_DIR/real-esrgan-ncnn-webassembly-simd-threads.data"; do
   if [ ! -s "$TMP_DIST/$asset" ]; then
     echo "Assembled site is incomplete: missing $asset" >&2
     exit 1
@@ -138,7 +213,9 @@ fi
 trap - EXIT INT TERM
 
 echo "Build done. Site assembled in ./dist/"
-echo "  dist/index.html   page entry"
-echo "  dist/statics/     scripts, WASM, pthread worker, ORT runtime"
-echo "  dist/models/      manifest.json, ONNX models, preloaded CPU .data"
+echo "  dist/index.html              page entry"
+echo "  dist/statics/$STATIC_DIR/    scripts, WASM, pthread worker, ORT runtime"
+echo "  dist/models/$MODEL_DIR/      manifest.json, ONNX models, preloaded CPU .data"
+echo "The v* directories are content-derived, so a deploy always gets fresh URLs"
+echo "and neither a browser nor a CDN cache can serve a previous build."
 echo "Serve ./dist/ over HTTP with COOP/COEP headers (see README); the directory is deployable on its own."

@@ -39,9 +39,16 @@ go run local_server.go
 ```text
 dist/
 ├── index.html
-├── statics/   # wasmFeatureDetect.js, webgpu/, ort/, and real-esrgan-ncnn-webassembly-simd-threads.js / .wasm / .worker.js
-└── models/    # manifest.json, *.onnx, real-esrgan-ncnn-webassembly-simd-threads.data
+├── statics/v<content-hash>/   # wasmFeatureDetect.js, webgpu/, ort/, and real-esrgan-ncnn-webassembly-simd-threads.js / .wasm / .worker.js
+└── models/v<content-hash>/    # manifest.json, *.onnx, real-esrgan-ncnn-webassembly-simd-threads.data
 ```
+
+`statics/` and `models/` each contain a content-hash subdirectory (`v…`) and `index.html` only
+references those versioned paths: **change the assets and the URLs change**. No browser cache and
+no CDN (Cloudflare, etc.) can answer a request for a new build with a response cached for an older
+one. This matters for the CPU backend: static assets are normally cached for 30 days, and an old
+response without a `Cross-Origin-Embedder-Policy` header makes Chrome block the pthread worker, so
+the page hangs on "正在加载 CPU WASM 与模型资源…". Unchanged assets keep their hash and stay cached.
 
 `dist/` can be moved and deployed on its own. If ORT or ONNX inputs are missing, the build fails
 before replacing an existing `dist/` and tells you which preparation script to run.
@@ -75,15 +82,48 @@ server {
     add_header Cross-Origin-Embedder-Policy "require-corp" always;
     add_header Cross-Origin-Resource-Policy "same-origin" always;
 
+    # Long caching is safe: URLs carry a content hash, so a new build never
+    # reuses a stale entry. Note that nginx `add_header` replaces rather than
+    # inherits -- any `add_header` inside a location drops all three headers
+    # above and Chrome then blocks the same-origin pthread worker with
+    # ERR_BLOCKED_BY_RESPONSE / coep-frame-resource-needs-coep-header.
+    # Use `expires` (a different module) for cache policy, never add_header.
+    location /statics/ {
+        expires 30d;
+        try_files $uri =404;
+    }
+
+    location /models/ {
+        expires 30d;
+        try_files $uri =404;
+    }
+
+    # The entry HTML must be revalidated so new asset paths are picked up.
+    location = /index.html {
+        expires -1;
+        try_files $uri =404;
+    }
+
     location / {
         try_files $uri $uri/ =404;
     }
 }
 ```
 
-All three headers are required for the page to be `crossOriginIsolated`; without them the CPU
-backend cannot use threads. The nginx user must be able to read `dist/` (copy it to `/var/www/`
-rather than serving it from a home directory), then run `nginx -t && systemctl reload nginx`.
+All three headers are required for the page to be `crossOriginIsolated`, and they must cover every
+path including `/statics/` (worker scripts especially). Without them the CPU backend cannot use
+threads. `.wasm` must be served as `application/wasm` and `.mjs` as JavaScript, or ORT's dynamic
+`import()` is rejected. The nginx user must be able to read `dist/` (copy it to `/var/www/` rather
+than serving it from a home directory), then run `nginx -t && systemctl reload nginx`.
+
+### Behind Cloudflare
+
+- Assets are cached at the edge. Content-hashed URLs bypass old copies, but paths cached by an
+  earlier deploy only disappear after their TTL or a dashboard Purge Cache.
+- Disable **Rocket Loader** for the site: it fetches and `eval`s scripts itself, leaving
+  `document.currentScript` empty and breaking loaders that depend on the script path (the frontend
+  now pins `mainScriptUrlOrBlob` as a fallback, but off is safer).
+- Check `crossOriginIsolated` in the console after loading the page; it must be `true`.
 
 ### Adding models
 
