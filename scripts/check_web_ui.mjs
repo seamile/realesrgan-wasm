@@ -56,10 +56,12 @@ for (const locale of locales) {
 }
 
 // Large-image feedback must be warning-only at the agreed 4M-pixel boundary.
-const showFileStart = html.indexOf("function showFile(f){");
+const showFileStart = html.indexOf("function esc(s){");
 const showFileEnd = html.indexOf("$('#file').onchange", showFileStart);
 if (showFileStart < 0 || showFileEnd < 0) throw new Error("could not locate showFile() for image-size regression checks");
 const showFileSource = html.slice(showFileStart, showFileEnd);
+// The picker's file-info helpers are used by render() too.
+const metaSource = html.match(/function esc\(s\)\{[\s\S]*?\}function showFile/)[0].replace(/function showFile$/, "");
 
 // The run button is the Stop button while upscaling, so showFile() updates it
 // through updateRunButton(); the harness therefore has to run that helper and
@@ -76,11 +78,21 @@ function freshNodes() {
   const nodes = new Map();
   return (selector) => {
     if (!nodes.has(selector)) {
+      const classes = new Set();
       nodes.set(selector, {
         hidden: false, disabled: false, textContent: "", value: "", style: {},
         setAttribute(name, value) { this[name] = value; },
         removeAttribute(name) { delete this[name]; },
-        classList: { add() {}, remove() {}, toggle() {} },
+        classList: {
+          add(name) { classes.add(name); },
+          remove(name) { classes.delete(name); },
+          toggle(name, on) {
+            if (on === undefined) { classes.has(name) ? classes.delete(name) : classes.add(name); }
+            else if (on) { classes.add(name); }
+            else { classes.delete(name); }
+          },
+          contains(name) { return classes.has(name); },
+        },
       });
     }
     return nodes.get(selector);
@@ -142,12 +154,66 @@ if (!html.includes('<label for="file"><img id="thumb"')) {
 if (!html.includes('<button type="button" class="drop-clear" id="clear"')) {
   throw new Error("the preview needs an explicit clear button");
 }
+
+// File info: a block on its own line under the centred image, left-aligned, one
+// line per field, with a long file name truncated by "...".
+const meta = preview.node("#fileMeta");
+if ((meta.innerHTML.match(/class="meta-line"/g) || []).length !== 2) {
+  throw new Error("the selected image's file name and resolution must be one line each");
+}
+if (!meta.innerHTML.includes("fileNameLabel") || !meta.innerHTML.includes("fixture.png")) {
+  throw new Error(`the file info must name the selected file, got ${meta.innerHTML}`);
+}
+if (!meta.innerHTML.includes("resolutionLabel") || !meta.innerHTML.includes("800 × 600")) {
+  throw new Error(`the file info must report the resolution, got ${meta.innerHTML}`);
+}
+if (!meta.classList.contains("meta-selected")) {
+  throw new Error("the selected file info must switch to the left-aligned layout");
+}
+if (meta.innerHTML.includes("<img")) {
+  throw new Error("the file info must not sit on the image's line");
+}
+for (const needle of [
+  ".drop-meta{display:block",
+  ".drop-meta.meta-selected{text-align:left}",
+  ".drop-meta .meta-line{display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}",
+  '<span class="hint drop-meta" id="fileMeta"',
+]) {
+  if (!html.includes(needle)) throw new Error(`web/index.html is missing ${needle}`);
+}
+if (html.indexOf('id="preview"') > html.indexOf('id="fileMeta"')) {
+  throw new Error("the file info must follow the preview so it renders below the image");
+}
+
+// The image must own its line: the drop area centres inline content, and the
+// meta line is a block so it cannot share that line.
+const fitted = preview.context.shortName("x".repeat(80), 28);
+if (!fitted.endsWith("...") || fitted.length !== 28) {
+  throw new Error(`a long file name must be truncated with "...", got ${fitted}`);
+}
+if (preview.context.shortName("photo.png", 28) !== "photo.png") {
+  throw new Error("a short file name must be left alone");
+}
+const wide = preview.context.shortName("图".repeat(40), 28);
+if (!wide.endsWith("...") || preview.context.metaUnits(wide.slice(0, -3)) > 25) {
+  throw new Error(`full-width file names must stay inside the size budget, got ${wide}`);
+}
+if (preview.context.shortName("photo.png", 28).length !== preview.context.metaUnits("photo.png")) {
+  throw new Error("half-width file names must cost one unit per character");
+}
+if (preview.context.metaUnits("图") !== 2) {
+  throw new Error("full-width file names must cost two units per character");
+}
+
 preview.context.clearFile();
 if (!preview.node("#preview").hidden || preview.node("#dropEmpty").hidden) {
   throw new Error("clearing the selection must restore the picker prompt");
 }
 if (preview.node("#thumb").src !== undefined) {
   throw new Error("clearing the selection must drop the preview image");
+}
+if (preview.node("#fileMeta").textContent !== "recommend" || preview.node("#fileMeta").classList.contains("meta-selected")) {
+  throw new Error("clearing the selection must restore the centred recommendation hint");
 }
 if (preview.context.statusMessage?.key !== "imagePrompt") {
   throw new Error("clearing the selection must return the status to the image prompt");
@@ -210,7 +276,7 @@ const renderContext = vm.createContext({
     id: `node-${key}`, dataset: { t: key }, set innerHTML(value) { painted.push([key, value]); },
   })),
 });
-vm.runInContext(buttonSource + renderSource + "render();", renderContext);
+vm.runInContext(metaSource + buttonSource + renderSource + "render();", renderContext);
 if (!painted.length) throw new Error("render() painted no [data-t] nodes; the check cannot vouch for them");
 for (const [key, value] of painted) {
   if (value === key || value === undefined || value === "") {
@@ -343,6 +409,21 @@ for (const [text, pattern, message] of [
   [root.T["zh-Hans"].privacyText, /日志|記錄|记录/, "the Chinese privacy copy must not mention access logs"],
 ]) {
   if (pattern.test(text)) throw new Error(`${message}: ${text}`);
+}
+
+// Every locale labels the two file-info fields with a leading bullet.
+for (const locale of locales) {
+  for (const key of ["fileNameLabel", "resolutionLabel"]) {
+    const text = root.T[locale]?.[key];
+    if (!text || !text.startsWith("• ")) {
+      throw new Error(`${locale}.${key} must start with a bullet, got ${JSON.stringify(text)}`);
+    }
+  }
+}
+
+// Switching language with an image selected must re-localize the file info.
+if (!renderSource.includes("updateFileMeta()")) {
+  throw new Error("render() must re-render the picker's file info when the language changes");
 }
 
 // progress() must tolerate calls without an explicit window, otherwise the
