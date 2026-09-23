@@ -53,6 +53,15 @@ require_file "$ORT_DIR/ort-wasm-simd-threaded.asyncify.mjs" "$PREPARE_HINT"
 require_file "$ORT_DIR/ort-wasm-simd-threaded.asyncify.wasm" "$PREPARE_HINT"
 require_file "$ONNX_DIR/manifest.json" "$PREPARE_HINT"
 
+for model in realesr-general-x4v3 realesr-animevideov3-x4 realesrgan-x4plus realesrgan-x4plus-anime; do
+  require_file "./models/$model.param" "Missing CPU model $model. Run ./scripts/prepare_models.sh."
+  require_file "./models/$model.bin" "Missing CPU model $model. Run ./scripts/prepare_models.sh."
+  if ! grep -q '"name"[[:space:]]*:[[:space:]]*"'"$model"'"' "$ONNX_DIR/manifest.json"; then
+    echo "Missing WebGPU model $model in $ONNX_DIR/manifest.json." >&2
+    exit 1
+  fi
+done
+
 manifest_models=$(sed -n 's/.*"file"[[:space:]]*:[[:space:]]*"\([^"]*\.onnx\)".*/\1/p' "$ONNX_DIR/manifest.json")
 if [ -z "$manifest_models" ]; then
   echo "No ONNX model entries in $ONNX_DIR/manifest.json." >&2
@@ -90,6 +99,12 @@ rm -rf "$TMP_DIST"
 mkdir -p "$TMP_DIST/statics/webgpu" "$TMP_DIST/statics/ort" "$TMP_DIST/models"
 
 cp -f "$WEB/index.html" "$TMP_DIST/index.html"
+cp -f "$WEB/i18n.js" "$TMP_DIST/i18n.js"
+cp -f ./LICENSE "$TMP_DIST/LICENSE"
+cp -f ./NOTICE "$TMP_DIST/NOTICE"
+cp -f "$WEB/robots.txt" "$TMP_DIST/robots.txt"
+cp -f "$WEB/sitemap.xml" "$TMP_DIST/sitemap.xml"
+
 cp -f "$WEB/wasmFeatureDetect.js" "$TMP_DIST/statics/"
 cp -f "$WEB/webgpu/realesrgan-webgpu.js" "$TMP_DIST/statics/webgpu/"
 
@@ -102,7 +117,9 @@ done
 cp -f "$BUILD/$ARTIFACT.js" "$TMP_DIST/statics/"
 cp -f "$BUILD/$ARTIFACT.wasm" "$TMP_DIST/statics/"
 cp -f "$BUILD/$ARTIFACT.worker.js" "$TMP_DIST/statics/"
-cp -f "$BUILD/$ARTIFACT.data" "$TMP_DIST/models/"
+# Keep Emscripten's generated JS, WASM, worker and data package together so
+# its default relative loader works identically from root and locale routes.
+cp -f "$BUILD/$ARTIFACT.data" "$TMP_DIST/statics/"
 
 cp -f "$ONNX_DIR/manifest.json" "$TMP_DIST/models/"
 cp -f "$ONNX_DIR"/*.onnx "$TMP_DIST/models/"
@@ -150,8 +167,8 @@ version_dir() {
 }
 
 rewrite_asset_paths() {
-  sed -e "s|\"statics/|\"statics/$STATIC_DIR/|g" \
-      -e "s|\"models/|\"models/$MODEL_DIR/|g" "$1" > "$1.tmp"
+  sed -e "s|statics/|/statics/$STATIC_DIR/|g" \
+      -e "s|models/|/models/$MODEL_DIR/|g" "$1" > "$1.tmp"
   mv "$1.tmp" "$1"
 }
 
@@ -179,6 +196,12 @@ version_dir "$TMP_DIST/models" "$MODEL_DIR"
 # (the hints paragraph) is left alone; every loadable path is written quoted.
 rewrite_asset_paths "$TMP_DIST/index.html"
 rewrite_asset_paths "$TMP_DIST/statics/$STATIC_DIR/webgpu/realesrgan-webgpu.js"
+# Every locale uses root-relative, content-versioned assets. This avoids
+# duplicating fragile ../ path rewriting for nested language routes.
+for locale in en zh-Hans zh-Hant fr de es pt ar ru ja ko; do
+  mkdir -p "$TMP_DIST/$locale"
+  sed "s|fetch('LICENSE')|fetch('/LICENSE')|" "$TMP_DIST/index.html" > "$TMP_DIST/$locale/index.html"
+done
 check_versions "$TMP_DIST/index.html"
 check_versions "$TMP_DIST/statics/$STATIC_DIR/webgpu/realesrgan-webgpu.js"
 
@@ -192,7 +215,7 @@ for asset in \
   "statics/$STATIC_DIR/real-esrgan-ncnn-webassembly-simd-threads.wasm" \
   "statics/$STATIC_DIR/real-esrgan-ncnn-webassembly-simd-threads.worker.js" \
   "models/$MODEL_DIR/manifest.json" \
-  "models/$MODEL_DIR/real-esrgan-ncnn-webassembly-simd-threads.data"; do
+  "statics/$STATIC_DIR/real-esrgan-ncnn-webassembly-simd-threads.data"; do
   if [ ! -s "$TMP_DIST/$asset" ]; then
     echo "Assembled site is incomplete: missing $asset" >&2
     exit 1
@@ -215,7 +238,7 @@ trap - EXIT INT TERM
 echo "Build done. Site assembled in ./dist/"
 echo "  dist/index.html              page entry"
 echo "  dist/statics/$STATIC_DIR/    scripts, WASM, pthread worker, ORT runtime"
-echo "  dist/models/$MODEL_DIR/      manifest.json, ONNX models, preloaded CPU .data"
+echo "  dist/models/$MODEL_DIR/      manifest.json and ONNX models"
 echo "The v* directories are content-derived, so a deploy always gets fresh URLs"
 echo "and neither a browser nor a CDN cache can serve a previous build."
 echo "Serve ./dist/ over HTTP with COOP/COEP headers (see README); the directory is deployable on its own."

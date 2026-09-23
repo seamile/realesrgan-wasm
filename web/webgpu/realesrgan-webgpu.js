@@ -139,9 +139,16 @@
       if (typeof ort === "undefined") {
         throw new Error("onnxruntime-web not loaded (ort global missing)");
       }
+      if (!ort.env) {
+        throw new Error("onnxruntime-web did not expose its environment");
+      }
       if (!this.ortConfigured) {
         // Must be an absolute URL: ORT loads its .mjs via dynamic import(),
         // and bare relative specifiers like "ort/..." fail to resolve.
+        // The WebGPU bundle may expose env before it creates the optional WASM
+        // settings object. Language pages also live one directory below root,
+        // so runtime assets must use root-relative URLs.
+        ort.env.wasm = ort.env.wasm || {};
         ort.env.wasm.wasmPaths = new URL("statics/ort/", global.location.href).href;
         ort.env.wasm.numThreads = Math.min(4, navigator.hardwareConcurrency || 2);
         // Prefer dGPU when the browser honors it (currently ignored on Windows Chrome).

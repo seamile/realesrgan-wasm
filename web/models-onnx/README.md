@@ -23,12 +23,8 @@ The build step (`./build.sh`) then packages this directory as `dist/models/`.
 
 - I/O blob names: `data` / `output`
 - Tile size in the page must match export size (`tilesize + 2 * prepadding`)
-- `realesrgan-x2plus.onnx` and `realesrgan-x4plus.onnx` are large (~67MB each);
-  `realesrgan-x4plus-anime.onnx` is ~18MB. Drop the ones you do not need for smaller demos.
-- `realesrgan-x4plus` has no `pixel_unshuffle`, so its RRDB body runs at the full tile
-  resolution while x2plus runs it at half resolution: at the same `tilesize` it uses about
-  4x the body activations. If a GPU is memory-tight, lower `tilesize` (and re-export with the
-  matching `--size`) rather than changing the manifest alone.
+- The production manifest contains four fixed 4x models. Keep the manifest and
+  CPU `models/` directory in sync when preparing a release.
 - `realesrgan-x4plus-anime` is the 6-block RRDB ("6B") variant; it must be exported with
   `--num-block 6`.
 - `realesrgan-x4plus.pth` only exists in the `v0.1.0` release tag, not `v0.2.2.4`.

@@ -6,10 +6,8 @@
 #   ./scripts/download_models.sh
 #   ./scripts/download_models.sh --include-wdn
 #
-# Defaults mirror the WebGPU model list (web/models-onnx/manifest.json):
-#   realesr-animevideov3-x2/x3/x4, realesr-general-x4v3,
-#   realesrgan-x4plus (~33MB), realesrgan-x4plus-anime (~9MB)
-# The last two come out of the official package already downloaded below.
+# Downloads the four production models: animevideov3-x4, general-x4v3,
+# realesrgan-x4plus and realesrgan-x4plus-anime.
 #
 # realesrgan-x2plus has no official ncnn build; convert it locally with the
 # official pipeline: ./scripts/convert_x2plus.sh
@@ -99,7 +97,7 @@ while IFS= read -r -d '' model; do
     cp -f "$model" "$DEST/"
     echo "Copied $(basename "$model")"
     found=1
-done < <(find "$extract" -type f -name 'realesr-animevideov3-*' -print0)
+done < <(find "$extract" -type f -name 'realesr-animevideov3-x4.*' -print0)
 
 if (( ! found )); then
     echo "The official package did not contain animevideov3 models." >&2
