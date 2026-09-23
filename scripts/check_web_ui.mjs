@@ -118,13 +118,23 @@ if (!/(?:inset:0(?:;|$)|height:100%)/.test(sliderCss)) {
 
 // The 4× image must be scaled into the same display box as the original rather
 // than rendered at its intrinsic dimensions and clipped to the top-left.
+const beforeImageCss = html.match(/\.compare img\{([^}]*)\}/)?.[1] || "";
 const afterImageCss = html.match(/\.compare \.after img\{([^}]*)\}/)?.[1] || "";
 if (!/width:100%/.test(afterImageCss) || !/height:100%/.test(afterImageCss)) {
   visualRegressionFailures.push("comparison images do not share the same displayed dimensions");
 }
+if (!/object-fit:contain/.test(beforeImageCss) || !/object-fit:contain/.test(afterImageCss)) {
+  visualRegressionFailures.push("original and result must preserve their aspect ratios inside the preview");
+}
 const stageCss = html.match(/\.compare-inner\{([^}]*)\}/)?.[1] || "";
 if (!/background:#f5f5f5/.test(stageCss)) {
   visualRegressionFailures.push("transparent image areas must not reveal the dark preview background");
+}
+if (html.includes('<div class="labels">')) {
+  visualRegressionFailures.push("comparison labels should not be rendered in the preview");
+}
+if (/\.labels(?: span)?\{/.test(html)) {
+  visualRegressionFailures.push("obsolete comparison-label styling should be removed");
 }
 const sliderMapping = html.match(/\$\('#slider'\)\.oninput=e=>\{([^}]*)\}/)?.[1] || "";
 if (!sliderMapping.includes("$('#divider').style.left=e.target.value+'%'") ||
