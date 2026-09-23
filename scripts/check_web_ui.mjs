@@ -55,6 +55,132 @@ for (const locale of locales) {
   }
 }
 
+// Large-image feedback must be warning-only at the agreed 4M-pixel boundary.
+const showFileStart = html.indexOf("function showFile(f){");
+const showFileEnd = html.indexOf("$('#file').onchange", showFileStart);
+if (showFileStart < 0 || showFileEnd < 0) throw new Error("could not locate showFile() for image-size regression checks");
+const showFileSource = html.slice(showFileStart, showFileEnd);
+function selectImage(width, height) {
+  const nodes = {
+    "#afterImg": { removeAttribute() {} },
+    "#stage": {},
+    "#empty": {},
+    "#compare": { classList: { add() {} } },
+    "#run": {},
+    "#fileMeta": {},
+  };
+  const context = {
+    busy: false, resultReady: false, resultUrl: null, file: null, largeImage: false,
+    imageReady: false, w: 0, h: 0, srcUrl: null, alphaCanvas: null,
+    tr: (key) => key,
+    status: (key, kind) => { context.statusMessage = { key, kind }; },
+    $: (selector) => nodes[selector] || {},
+    URL: { createObjectURL: () => "blob:fixture", revokeObjectURL() {} },
+    Image: class {
+      constructor() { this.width = width; this.height = height; }
+      set src(_value) { this.onload(); }
+    },
+    document: {
+      createElement: () => ({ width: 0, height: 0, getContext: () => ({ drawImage() {} }) }),
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(showFileSource, context);
+  context.showFile({ type: "image/png", name: "fixture.png" });
+  return { context, run: nodes["#run"] };
+}
+const belowWarning = selectImage(1999, 2000);
+if (belowWarning.context.statusMessage?.key !== "imageReady" || belowWarning.run.disabled) {
+  throw new Error("images below 4M pixels should be accepted without a size warning");
+}
+const wideBelowWarning = selectImage(5000, 500);
+if (wideBelowWarning.context.statusMessage?.key !== "imageReady" || wideBelowWarning.run.disabled) {
+  throw new Error("a long edge above 4096px alone must not trigger a size warning or block");
+}
+for (const [width, height] of [[2000, 2000], [5000, 1000]]) {
+  const selection = selectImage(width, height);
+  if (selection.context.statusMessage?.key !== "imageTooLarge" || selection.run.disabled || !selection.context.imageReady) {
+    throw new Error(`${width}x${height} must show a warning but remain ready to upscale`);
+  }
+}
+if (!html.includes("if(statusKey)status(statusKey,statusKind,statusValues)")) {
+  throw new Error("the current status must be retranslated after changing the page language");
+}
+
+function runtimeStatusTable(source) {
+  const start = source.indexOf("// Runtime status messages");
+  const end = source.indexOf("\n};", start);
+  if (start < 0 || end < 0) throw new Error("missing runtime status translation table");
+  return source.slice(start, end + 3);
+}
+if (runtimeStatusTable(html) !== runtimeStatusTable(extraTranslations)) {
+  throw new Error("runtime status translations in index.html and i18n.js are out of sync");
+}
+
+// The status table must EXTEND each locale table. Assigning a status-only object
+// over a locale (Object.assign(T, {en:{...}})) silently deletes that locale's
+// page copy, so every label turns into its raw translation key on the next
+// render() - which a style or preference click triggers.
+const baseT = vm.runInNewContext("(" + baseMatch[1] + ")", {});
+const baseKeys = Object.keys(baseT.en).sort();
+const pageRoot = loadPage("https://4x.pixcc.net/");
+for (const locale of locales) {
+  const lost = baseKeys.filter((key) => pageRoot.T[locale][key] === undefined);
+  if (lost.length) {
+    throw new Error(`locale ${locale} lost its page copy after the status merge: ${lost.join(", ")}`);
+  }
+}
+// The runtime status keys must arrive as a standalone table that is merged per
+// locale, never as Object.assign(T, {en:{...}}) which replaces those locales.
+for (const [name, source] of [["web/index.html", html], ["web/i18n.js", extraTranslations]]) {
+  const block = runtimeStatusTable(source);
+  if (!block.includes("const S = {")) {
+    throw new Error(`${name} must build the runtime status table as its own object`);
+  }
+}
+
+// Clicking a style or preference re-runs render() for every [data-t] node. Run
+// that exact function in zh-Hans and require real copy, not raw keys.
+const renderSource = html.match(/function render\(\)\{[\s\S]*?\}const LOCALES/)[0].replace(/\}const LOCALES$/, "}");
+const painted = [];
+const renderContext = vm.createContext({
+  T: pageRoot.T, lang: "zh-Hans", resultReady: false, file: null,
+  statusKey: "", statusKind: "", statusValues: {},
+  tr: (key) => pageRoot.T["zh-Hans"][key] ?? pageRoot.T.en[key] ?? key,
+  status: () => {},
+  document: { documentElement: {} },
+  history: { replaceState: () => {} },
+  $: () => ({ value: "" }),
+  $$: () => ["settings", "photo", "start", "title"].map((key) => ({
+    id: `node-${key}`, dataset: { t: key }, set innerHTML(value) { painted.push([key, value]); },
+  })),
+});
+vm.runInContext(renderSource + "render();", renderContext);
+if (!painted.length) throw new Error("render() painted no [data-t] nodes; the check cannot vouch for them");
+for (const [key, value] of painted) {
+  if (value === key || value === undefined || value === "") {
+    throw new Error(`after switching style/preference, "${key}" rendered as its raw key instead of localized copy`);
+  }
+}
+if (!painted.some(([, value]) => /[\u4e00-\u9fff]/.test(value))) {
+  throw new Error("after switching style/preference, the page copy was not Chinese");
+}
+const warningStatusNode = { textContent: "", className: "" };
+const statusSource = html.slice(html.indexOf("function status("), html.indexOf("function statusErrorKey"));
+const statusContext = vm.createContext({
+  T: root.T, lang: "en", statusKey: "", statusKind: "", statusValues: {},
+  $: () => warningStatusNode,
+});
+statusContext.tr = (key) => statusContext.T[statusContext.lang]?.[key] || statusContext.T.en[key] || key;
+vm.runInContext(statusSource, statusContext);
+statusContext.status("imageTooLarge", "warn");
+const englishWarning = warningStatusNode.textContent;
+statusContext.lang = "zh-Hans";
+statusContext.status(statusContext.statusKey, statusContext.statusKind, statusContext.statusValues);
+if (!englishWarning.includes("large") || warningStatusNode.textContent === englishWarning || !warningStatusNode.textContent.includes("图片")) {
+  throw new Error("large-image warning did not follow the currently selected language");
+}
+
 // A direct locale route must retain its language instead of falling back to root.
 const fr = loadPage("https://4x.pixcc.net/fr/");
 if (fr.lang !== "fr") throw new Error(`Direct locale route /fr/ resolved to ${fr.lang}`);
@@ -91,7 +217,8 @@ const callbackContext = vm.createContext({
   $: (selector) => selector === "#bar" ? bar : statusNode,
   doneResolve: null,
   DOWNLOAD_SHARE: 0.25,
-  status: (text, kind = "") => { statusNode.textContent = text; statusNode.className = kind; },
+  progressPct: 0,
+  status: (key, kind = "", values = {}) => { statusNode.textContent = key === "upscalingProgress" ? `Upscaling locally… ${values.percent}%` : key; statusNode.className = kind; },
   console,
 });
 const progressSource = html.match(/function progress\([^\n]*?\}function selected/);
@@ -100,13 +227,21 @@ vm.runInContext(progressSource[0].replace(/function selected$/, ""), callbackCon
 const cpuCallbackSource = html.match(/function cpuCallback\(x\)\{[^\n]*?\}async function loadWasm/);
 if (!cpuCallbackSource) throw new Error("could not locate cpuCallback() in web/index.html");
 vm.runInContext(cpuCallbackSource[0].replace(/async function loadWasm$/, ""), callbackContext);
-callbackContext.cpuCallback(JSON.stringify({ eventType: "PROC_PROGRESS", progress_rate: 0.62 }));
-if (parseFloat(bar.style.width) !== 71.5) {
-  throw new Error(`CPU progress callback set ${bar.style.width || "no width"}, expected 71.5% at 62%`);
+// The reported percentage must be the one drawn on the bar. Reporting the raw
+// stage rate beside a bar that already includes the download share showed "1%"
+// next to a bar that was a quarter full.
+for (const rate of [0.01, 0.62, 1]) {
+  callbackContext.cpuCallback(JSON.stringify({ eventType: "PROC_PROGRESS", progress_rate: rate }));
+  const barPercent = parseFloat(bar.style.width);
+  if (barPercent !== 25 + 75 * rate) {
+    throw new Error(`CPU progress callback set ${bar.style.width || "no width"}, expected ${25 + 75 * rate}% at rate ${rate}`);
+  }
+  const shown = Number((statusNode.textContent.match(/(\d+)%/) || [])[1]);
+  if (shown !== Math.ceil(barPercent)) {
+    throw new Error(`progress text says ${shown}% while the bar is at ${barPercent}%`);
+  }
 }
-if (!statusNode.textContent.includes("62%")) {
-  throw new Error("CPU progress callback did not update the matching progress label");
-}
+
 
 // The comparison must expose a full-stage drag surface. A range input with no
 // height only occupies the browser's default-sized strip at the stage bottom.
