@@ -60,21 +60,41 @@ const showFileStart = html.indexOf("function showFile(f){");
 const showFileEnd = html.indexOf("$('#file').onchange", showFileStart);
 if (showFileStart < 0 || showFileEnd < 0) throw new Error("could not locate showFile() for image-size regression checks");
 const showFileSource = html.slice(showFileStart, showFileEnd);
-function selectImage(width, height) {
-  const nodes = {
-    "#afterImg": { removeAttribute() {} },
-    "#stage": {},
-    "#empty": {},
-    "#compare": { classList: { add() {} } },
-    "#run": {},
-    "#fileMeta": {},
+
+// The run button is the Stop button while upscaling, so showFile() updates it
+// through updateRunButton(); the harness therefore has to run that helper and
+// the result reset alongside the picker code.
+const buttonSource = html
+  .match(/function runLabelKey\(\)\{[\s\S]*?\}function setControlsLocked/)[0]
+  .replace(/function setControlsLocked$/, "");
+const resetResultSource = html
+  .match(/function resetResult\(\)\{[\s\S]*?\nfunction onRunClick/)[0]
+  .replace(/\nfunction onRunClick$/, "");
+const onRunClickSource = html.match(/function onRunClick\(\)\{[\s\S]*?\n/)[0];
+
+function freshNodes() {
+  const nodes = new Map();
+  return (selector) => {
+    if (!nodes.has(selector)) {
+      nodes.set(selector, {
+        hidden: false, disabled: false, textContent: "", value: "", style: {},
+        setAttribute(name, value) { this[name] = value; },
+        removeAttribute(name) { delete this[name]; },
+        classList: { add() {}, remove() {}, toggle() {} },
+      });
+    }
+    return nodes.get(selector);
   };
+}
+
+function selectImage(width, height) {
+  const node = freshNodes();
   const context = {
-    busy: false, resultReady: false, resultUrl: null, file: null, largeImage: false,
-    imageReady: false, w: 0, h: 0, srcUrl: null, alphaCanvas: null,
+    busy: false, cancelRequested: false, resultReady: false, resultUrl: null, file: null,
+    largeImage: false, imageReady: false, w: 0, h: 0, srcUrl: null, alphaCanvas: null,
     tr: (key) => key,
     status: (key, kind) => { context.statusMessage = { key, kind }; },
-    $: (selector) => nodes[selector] || {},
+    $: node,
     URL: { createObjectURL: () => "blob:fixture", revokeObjectURL() {} },
     Image: class {
       constructor() { this.width = width; this.height = height; }
@@ -85,9 +105,11 @@ function selectImage(width, height) {
     },
   };
   vm.createContext(context);
+  vm.runInContext(buttonSource, context);
+  vm.runInContext(resetResultSource, context);
   vm.runInContext(showFileSource, context);
   context.showFile({ type: "image/png", name: "fixture.png" });
-  return { context, run: nodes["#run"] };
+  return { context, node, run: node("#run") };
 }
 const belowWarning = selectImage(1999, 2000);
 if (belowWarning.context.statusMessage?.key !== "imageReady" || belowWarning.run.disabled) {
@@ -103,6 +125,37 @@ for (const [width, height] of [[2000, 2000], [5000, 1000]]) {
     throw new Error(`${width}x${height} must show a warning but remain ready to upscale`);
   }
 }
+
+// Selector area: the chosen image is shown in the picker box, the X clears it,
+// and clicking the image is what reopens the picker (the thumbnail is a <label
+// for="file"> descendant, so the file input stays the only control).
+const preview = selectImage(800, 600);
+if (preview.node("#preview").hidden || !preview.node("#dropEmpty").hidden) {
+  throw new Error("selecting an image must reveal its preview inside the picker area");
+}
+if (preview.node("#thumb").src !== "blob:fixture") {
+  throw new Error("the picker area must display the selected image");
+}
+if (!html.includes('<label for="file"><img id="thumb"')) {
+  throw new Error("the selected image must stay inside the file-picker label so clicking it reopens the picker");
+}
+if (!html.includes('<button type="button" class="drop-clear" id="clear"')) {
+  throw new Error("the preview needs an explicit clear button");
+}
+preview.context.clearFile();
+if (!preview.node("#preview").hidden || preview.node("#dropEmpty").hidden) {
+  throw new Error("clearing the selection must restore the picker prompt");
+}
+if (preview.node("#thumb").src !== undefined) {
+  throw new Error("clearing the selection must drop the preview image");
+}
+if (preview.context.statusMessage?.key !== "imagePrompt") {
+  throw new Error("clearing the selection must return the status to the image prompt");
+}
+if (preview.context.imageReady || !preview.run.disabled) {
+  throw new Error("clearing the selection must disable upscaling again");
+}
+
 if (!html.includes("if(statusKey)status(statusKey,statusKind,statusValues)")) {
   throw new Error("the current status must be retranslated after changing the page language");
 }
@@ -143,19 +196,21 @@ for (const [name, source] of [["web/index.html", html], ["web/i18n.js", extraTra
 // that exact function in zh-Hans and require real copy, not raw keys.
 const renderSource = html.match(/function render\(\)\{[\s\S]*?\}const LOCALES/)[0].replace(/\}const LOCALES$/, "}");
 const painted = [];
+const clearNode = { attrs: {}, setAttribute(name, value) { this.attrs[name] = value; } };
 const renderContext = vm.createContext({
   T: pageRoot.T, lang: "zh-Hans", resultReady: false, file: null,
+  busy: false, cancelRequested: false, imageReady: false,
   statusKey: "", statusKind: "", statusValues: {},
   tr: (key) => pageRoot.T["zh-Hans"][key] ?? pageRoot.T.en[key] ?? key,
   status: () => {},
   document: { documentElement: {} },
   history: { replaceState: () => {} },
-  $: () => ({ value: "" }),
+  $: (selector) => (selector === "#clear" ? clearNode : { value: "", textContent: "", disabled: false }),
   $$: () => ["settings", "photo", "start", "title"].map((key) => ({
     id: `node-${key}`, dataset: { t: key }, set innerHTML(value) { painted.push([key, value]); },
   })),
 });
-vm.runInContext(renderSource + "render();", renderContext);
+vm.runInContext(buttonSource + renderSource + "render();", renderContext);
 if (!painted.length) throw new Error("render() painted no [data-t] nodes; the check cannot vouch for them");
 for (const [key, value] of painted) {
   if (value === key || value === undefined || value === "") {
@@ -164,6 +219,9 @@ for (const [key, value] of painted) {
 }
 if (!painted.some(([, value]) => /[\u4e00-\u9fff]/.test(value))) {
   throw new Error("after switching style/preference, the page copy was not Chinese");
+}
+if (!/[\u4e00-\u9fff]/.test(clearNode.attrs["aria-label"] || "")) {
+  throw new Error("the clear button's accessible name must be localized by render()");
 }
 const warningStatusNode = { textContent: "", className: "" };
 const statusSource = html.slice(html.indexOf("function status("), html.indexOf("function statusErrorKey"));
@@ -197,6 +255,96 @@ if (html.includes("$('#run').onclick=()=>{")) {
   throw new Error("display() must not hijack the run button with its own download handler");
 }
 
+// Stop button: while a run is in flight the button must stay clickable and
+// cancel the run; it must never just go disabled with no way out.
+function buttonState(state) {
+  const node = freshNodes();
+  const calls = [];
+  const context = {
+    busy: false, cancelRequested: false, resultReady: false, imageReady: false,
+    file: { name: "photo.png" }, resultUrl: "blob:result",
+    tr: (key) => key,
+    $: node,
+    requestCancel: () => calls.push("cancel"),
+    startUpscale: () => { calls.push("start"); return Promise.resolve(); },
+    document: { createElement: () => ({ click() { calls.push("download"); } }) },
+    ...state,
+  };
+  vm.createContext(context);
+  vm.runInContext(buttonSource, context);
+  vm.runInContext(onRunClickSource, context);
+  return { context, run: node("#run"), calls };
+}
+
+const running = buttonState({ busy: true, imageReady: true });
+running.context.updateRunButton();
+if (running.run.textContent !== "stop" || running.run.disabled) {
+  throw new Error("a running upscale must offer a clickable Stop instead of a disabled button");
+}
+running.context.onRunClick();
+if (running.calls.join(",") !== "cancel") {
+  throw new Error("clicking Stop must request cancellation of the running task");
+}
+
+const stopping = buttonState({ busy: true, cancelRequested: true, imageReady: true });
+stopping.context.updateRunButton();
+if (stopping.run.textContent !== "stopping" || !stopping.run.disabled) {
+  throw new Error("the button must show a disabled stopping state while the task unwinds");
+}
+
+const idle = buttonState({ imageReady: true });
+idle.context.onRunClick();
+if (idle.calls.join(",") !== "start") {
+  throw new Error("with no run in flight the button must still start upscaling");
+}
+
+for (const [state, label, disabled] of [
+  [{ imageReady: true }, "start", false],
+  [{}, "start", true],
+  [{ resultReady: true, imageReady: true }, "download", false],
+]) {
+  const button = buttonState(state);
+  button.context.updateRunButton();
+  if (button.run.textContent !== label || button.run.disabled !== disabled) {
+    throw new Error(`run button showed ${button.run.textContent}/${button.run.disabled} for ${JSON.stringify(state)}, expected ${label}/${disabled}`);
+  }
+}
+
+// The cancel request must reach both compute paths and the CPU worker must be
+// able to leave its tile loop, otherwise Stop is only cosmetic.
+if (!html.includes("_cancel_process")) {
+  throw new Error("the page must call the native cancel hook when Stop is clicked");
+}
+const cpuSource = fs.readFileSync("realesrgan.cpp", "utf8");
+const hostSource = fs.readFileSync("main.cpp", "utf8");
+const cmakeSource = fs.readFileSync("CMakeLists.txt", "utf8");
+const gpuSource = fs.readFileSync("web/webgpu/realesrgan-webgpu.js", "utf8");
+if (!cpuSource.includes("if (cancel_requested())")) {
+  throw new Error("the CPU tile loop must poll cancel_requested() so Stop ends the run");
+}
+if (!/void cancel_process\(\)/.test(hostSource)) {
+  throw new Error("main.cpp must export cancel_process() for the page's Stop button");
+}
+if (!cmakeSource.includes("'_cancel_process'")) {
+  throw new Error("CMakeLists.txt must export _cancel_process or the page's Stop call is a no-op");
+}
+if (!gpuSource.includes("shouldCancel")) {
+  throw new Error("the WebGPU tile loop must accept a cancellation poll");
+}
+
+// Wording: no "local" qualifier on the upscale notice, no nagging on big
+// images, and no hosting-log footnote in the privacy panel.
+for (const [text, pattern, message] of [
+  [root.T.en.upscaling, /local/i, "the English upscale notice must not say 'locally'"],
+  [root.T["zh-Hans"].upscaling, /本地|本機/, "the Chinese upscale notice must not say 本地"],
+  [root.T.en.imageTooLarge, /continue/i, "the English size warning must not tell the user they may continue"],
+  [root.T["zh-Hans"].imageTooLarge, /继续|繼續/, "the Chinese size warning must not say 仍可继续"],
+  [root.T.en.privacyText, /access log/i, "the English privacy copy must not mention access logs"],
+  [root.T["zh-Hans"].privacyText, /日志|記錄|记录/, "the Chinese privacy copy must not mention access logs"],
+]) {
+  if (pattern.test(text)) throw new Error(`${message}: ${text}`);
+}
+
 // progress() must tolerate calls without an explicit window, otherwise the
 // width is computed from an undefined base and evaluates to NaN% (no-op).
 if (!/function progress\(n,base,span\)\{const b=base===undefined\?0:base;/.test(html)) {
@@ -218,7 +366,7 @@ const callbackContext = vm.createContext({
   doneResolve: null,
   DOWNLOAD_SHARE: 0.25,
   progressPct: 0,
-  status: (key, kind = "", values = {}) => { statusNode.textContent = key === "upscalingProgress" ? `Upscaling locally… ${values.percent}%` : key; statusNode.className = kind; },
+  status: (key, kind = "", values = {}) => { statusNode.textContent = key === "upscalingProgress" ? `Upscaling… ${values.percent}%` : key; statusNode.className = kind; },
   console,
 });
 const progressSource = html.match(/function progress\([^\n]*?\}function selected/);

@@ -201,7 +201,13 @@
       this.active = model;
     }
 
-    async process(rgba, w, h, model, onProgress) {
+    /**
+     * Tiled inference.
+     * @param {function(): boolean} [shouldCancel] polled between tiles; when it
+     *   returns true the run stops and an error with `cancelled === true` is
+     *   thrown, so the caller can tell a user Stop apart from a GPU failure.
+     */
+    async process(rgba, w, h, model, onProgress, shouldCancel) {
       await this.loadModel(model);
       const scale = model.scale;
       const TILE = model.tilesize;
@@ -227,6 +233,11 @@
         const tileY = yi * TILE;
         const tileH = Math.min(TILE, h - tileY);
         for (let xi = 0; xi < xtiles; xi++) {
+          if (shouldCancel && shouldCancel()) {
+            const cancelled = new Error("cancelled");
+            cancelled.cancelled = true;
+            throw cancelled;
+          }
           const tileT0 = performance.now();
           const tileX = xi * TILE;
           const tileW = Math.min(TILE, w - tileX);

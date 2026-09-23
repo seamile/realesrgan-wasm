@@ -288,6 +288,11 @@ int RealESRGAN::process(const ncnn::Mat& inimage, ncnn::Mat& outimage)
 
         for (int xi = 0; xi < xtiles; xi++)
         {
+            // Poll between tiles: the page's Stop button sets this flag and the
+            // run ends here, one tile's worth of work after the click.
+            if (cancel_requested())
+                return -2;
+
             std::chrono::steady_clock::time_point tile_begin = std::chrono::steady_clock::now();
 
             const int tile_w_nopad = std::min((xi + 1) * TILE_SIZE_X, w) - xi * TILE_SIZE_X;

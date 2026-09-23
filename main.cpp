@@ -1,4 +1,5 @@
 #include <chrono>
+#include <atomic>
 #include <iostream>
 #include <string>
 #include <thread>
@@ -25,6 +26,16 @@ static ncnn::ConditionVariable condition;
 static RealESRGAN* realesrgan = nullptr;
 static Task* proc_img_task = nullptr;
 static std::vector<ModelInfo> g_models;
+
+// Set by the page's Stop button through cancel_process() and polled by the tile
+// loop via cancel_requested(). Atomic because the worker thread reads it while
+// the main (browser) thread writes it.
+static std::atomic<bool> g_cancel(false);
+
+bool cancel_requested()
+{
+    return g_cancel.load();
+}
 
 static ncnn::Mutex finish_lock;
 static ncnn::ConditionVariable finish_condition;
@@ -133,18 +144,28 @@ static void worker()
             (size_t)inImage.elemsize,
             (int)inImage.elemsize);
 
-        realesrgan->process(inImage, outImage);
-        copy_with_alpha_channel(
-            proc_img_task->output_image_data,
-            (const unsigned char*)outImage.data,
-            outImage.w,
-            outImage.h);
+        const int process_ret = realesrgan->process(inImage, outImage);
+        if (process_ret == 0)
+        {
+            copy_with_alpha_channel(
+                proc_img_task->output_image_data,
+                (const unsigned char*)outImage.data,
+                outImage.w,
+                outImage.h);
 
-        std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
-        auto cost = std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count();
-        std::cout << "thread process done, cost: " << cost / 1000.0 << " secs" << std::endl;
-        process_image_success_callback(proc_img_task->image_id, cost);
-
+            std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+            auto cost = std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count();
+            std::cout << "thread process done, cost: " << cost / 1000.0 << " secs" << std::endl;
+            process_image_success_callback(proc_img_task->image_id, cost);
+        }
+        else
+        {
+            // -2 means the page asked to stop. The output buffer is left
+            // untouched, so the page can free it as soon as it sees this
+            // callback and never has to guard against a late tile write.
+            std::cout << "thread process stopped, ret: " << process_ret << std::endl;
+            process_image_success_callback(proc_img_task->image_id, process_ret == -2 ? -2 : -1);
+        }
         delete proc_img_task;
         proc_img_task = nullptr;
         lock.unlock();
@@ -215,6 +236,10 @@ int process_image(int image_id,
         return -1;
     }
 
+    // A Stop that arrived while no task was queued (during a model download, for
+    // example) must not abort the run the user starts next.
+    g_cancel.store(false);
+
     remove_alpha_channel(input_image_data, input_w, input_h);
 
     Task* tsk = new Task();
@@ -230,6 +255,13 @@ int process_image(int image_id,
     lock.unlock();
     condition.signal();
     return 0;
+}
+
+// Ask the tile loop to stop. Returns immediately; the worker reports PROC_END
+// with cost == -2 once it has left the loop. Safe to call with no active task.
+void cancel_process()
+{
+    g_cancel.store(true);
 }
 
 }

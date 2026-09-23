@@ -27,7 +27,8 @@ if (NOT LOCAL_DEBUG)
     # CPU models are downloaded on demand and written into the Emscripten MEMFS by
     # the page, so the build must export the FS runtime API and must NOT preload a
     # combined .data package (that would make every visitor fetch all four models).
-    set(EXPORT_FLAGS "-s EXPORTED_FUNCTIONS=['_process_image','_list_models','_get_model_count','_get_model_name','_get_model_scale','_get_model_input_blob','_get_model_output_blob','_malloc','_free'] -s EXPORTED_RUNTIME_METHODS=['ccall','cwrap','HEAPU8','UTF8ToString','FS']")
+    # _cancel_process lets the page's Stop button end a running CPU tile loop.
+    set(EXPORT_FLAGS "-s EXPORTED_FUNCTIONS=['_process_image','_cancel_process','_list_models','_get_model_count','_get_model_name','_get_model_scale','_get_model_input_blob','_get_model_output_blob','_malloc','_free'] -s EXPORTED_RUNTIME_METHODS=['ccall','cwrap','HEAPU8','UTF8ToString','FS']")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${EXPORT_FLAGS}")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${EXPORT_FLAGS}")
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${EXPORT_FLAGS}")

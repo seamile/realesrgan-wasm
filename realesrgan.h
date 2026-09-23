@@ -25,6 +25,11 @@ int guess_scale_from_name(const std::string& name);
 // Read Input / final output blob names from an ncnn .param file.
 int parse_param_blobs(const std::string& param_path, std::string& input_blob, std::string& output_blob);
 
+// Cooperative cancellation hook, implemented by the host translation unit
+// (main.cpp). The tile loop polls it between tiles, so a Stop click ends a long
+// CPU run within roughly one tile instead of after the whole image.
+bool cancel_requested();
+
 class RealESRGAN
 {
 public:
