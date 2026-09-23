@@ -20,14 +20,11 @@ cd real-esrgan-ncnn-webassembly
 # 1) Install the Emscripten SDK once; build.sh loads its environment automatically
 (cd emsdk && ./emsdk install 3.1.28 && ./emsdk activate 3.1.28)
 
-# 2) Default CPU models (6 models, ~49MB; the same list as the WebGPU manifest)
-./scripts/download_models.sh
+# 2) Prepare the four production models shared by CPU and WebGPU
+#    (Python 3 + PyTorch + onnx + Node.js; required for the first release build)
+./scripts/prepare_models.sh
 
-# 3) WebGPU publish assets (Python 3 + PyTorch + onnx + Node.js; required for the first release build)
-#    --skip-x2plus keeps the WebGPU list identical to the CPU one above
-./scripts/prepare_webgpu_models.sh --skip-x2plus
-
-# 4) Build Route A and assemble dist/
+# 3) Build Route A and assemble dist/
 ./build.sh
 
 # 5) Serve dist/ with COOP/COEP (required for WASM threads)
@@ -39,10 +36,17 @@ go run local_server.go
 
 ```text
 dist/
-├── index.html
+├── index.html                 # root entry (English static copy, runtime language match)
+├── <locale>/index.html        # en zh-Hans zh-Hant fr de es pt ar ru ja ko: prerendered localized entries
+├── LICENSE / NOTICE
 ├── statics/v<content-hash>/   # wasmFeatureDetect.js, webgpu/, ort/, and real-esrgan-ncnn-webassembly-simd-threads.js / .wasm / .worker.js
-└── models/v<content-hash>/    # manifest.json, *.onnx, real-esrgan-ncnn-webassembly-simd-threads.data
+└── models/v<content-hash>/    # manifest.json, *.onnx, CPU *.param/*.bin (downloaded on demand)
 ```
+
+`scripts/prerender_locales.mjs` bakes `<html lang>`, `<title>`, description, canonical/hreflang,
+Open Graph, JSON-LD and the static body copy into every locale entry. The page also carries an
+inlined translation table for runtime language switching, so it never requests `i18n.js`
+separately.
 
 `statics/` and `models/` each contain a content-hash subdirectory (`v…`) and `index.html` only
 references those versioned paths: **change the assets and the URLs change**. No browser cache and
@@ -139,7 +143,7 @@ than serving it from a home directory), then run `nginx -t && systemctl reload n
 - **CPU:** put `.param`+`.bin` in `models/`, then re-run `./build.sh`.
 - **WebGPU:** put fixed-shape `.onnx` under `web/models-onnx/`, update `manifest.json`, then re-run `./build.sh`.
 
-`prepare_webgpu_models.sh` exports `realesr-animevideov3-x2/x3/x4`, `realesr-general-x4v3`, `realesrgan-x4plus` (~67MB) and `realesrgan-x4plus-anime` (~18MB); drop `--skip-x2plus` to also export `realesrgan-x2plus` (~67MB). Keep both backends in sync: either skip x2plus on the WebGPU side, or add it to the CPU side with `./scripts/build_ncnn_tools.sh` + `./scripts/convert_x2plus.sh` (official weights only — third-party "rough" ONNX conversions tend to contain `Shape` layers). `build.sh` copies every model listed in `manifest.json` into `dist/models/`; delete the large ones you do not ship before building.
+`prepare_models.sh` prepares the four production models shared by CPU and WebGPU (`realesr-general-x4v3`, `realesr-animevideov3-x4`, `realesrgan-x4plus` ~67MB, `realesrgan-x4plus-anime` ~18MB). `build.sh` copies the manifest's ONNX files and the CPU `.param`/`.bin` files into `dist/models/`; the page downloads only the selected model at runtime. To add an optional x2plus model, use `./scripts/build_ncnn_tools.sh` + `./scripts/convert_x2plus.sh` for CPU and regenerate the WebGPU manifest for the ONNX side (keep both lists in sync).
 `realesrgan-x4plus` skips `pixel_unshuffle`, so its RRDB body runs at full tile resolution — about
 4x the body activations of x2plus at the same `tilesize`.
 

@@ -15,7 +15,8 @@ struct ModelInfo
     int scale;
 };
 
-// Scan virtual FS (preloaded models/) for *.param + matching *.bin.
+// Scan the Emscripten MEMFS working directory for *.param + matching *.bin.
+// The page downloads the selected model and writes both files there at runtime.
 int scan_models(std::vector<ModelInfo>& out);
 
 // Guess scale from model file name.

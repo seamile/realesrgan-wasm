@@ -29,7 +29,7 @@ English: see [README_EN.md](README_EN.md)
 ├── CMakeLists.txt / build.sh                 # Emscripten 构建 + 组装 dist/
 ├── local_server.go                           # 服务 dist/ 的本地静态服务器（含 COOP/COEP）
 ├── ncnn/ / emsdk/                            # Git 子模块
-├── models/                                   # CPU ncnn 模型源（权重不进 Git，编译时打进 .data）
+├── models/                                   # CPU ncnn 模型源（权重不进 Git，构建时发布到 dist/）
 ├── web/                                      # 网页源码与 WebGPU 生成资源（发布输入，不直接部署）
 │   ├── index.html                            # 前端
 │   ├── wasmFeatureDetect.js
@@ -39,7 +39,7 @@ English: see [README_EN.md](README_EN.md)
 ├── dist/                                     # 构建产物：自包含站点（不进 Git，可直接部署）
 │   ├── index.html
 │   ├── statics/                              # 脚本、WASM、pthread worker、ORT
-│   └── models/                               # manifest.json、ONNX、CPU .data
+│   └── models/                               # manifest.json、ONNX、CPU *.param/*.bin（按需下载）
 └── scripts/
     ├── download_models.sh                    # 下载 CPU ncnn 模型（默认含 x4plus / x4plus-anime）
     ├── prepare_webgpu_models.sh              # 导出 ONNX + 安装 ORT（--skip-x2plus 与 CPU 侧对齐）
@@ -48,7 +48,7 @@ English: see [README_EN.md](README_EN.md)
     └── pytorch2onnx_*.py
 ```
 
-**不会提交到 Git 的大文件**（由脚本生成）：模型权重、WASM `.data`、ONNX、`web/ort/`、`dist/`、`node_modules/`、`build/`。
+**不会提交到 Git 的大文件**（由脚本生成）：模型权重、ONNX、`web/ort/`、`dist/`、`node_modules/`、`build/`。
 
 ---
 
@@ -135,43 +135,38 @@ git submodule update --init --recursive
 ./scripts/download_models.sh
 ```
 
-默认与 WebGPU 侧的准备脚本默认导出同一批模型（`web/models-onnx/manifest.json`），共 6 个、约 49MB：
+默认下载四个生产 CPU 模型（约 47MB），与 WebGPU 清单（`web/models-onnx/manifest.json`）保持一致：
 
-- `realesr-animevideov3-x2/x3/x4`（动漫，各约 1.2MB）
 - `realesr-general-x4v3`（照片 4x，约 4.6MB）
+- `realesr-animevideov3-x4`（动漫 4x，约 1.2MB）
 - `realesrgan-x4plus`（照片 4x，约 33MB）
 - `realesrgan-x4plus-anime`（动漫 4x，6B 版，约 9MB）
-
-后两个取自脚本本来就会下载的官方 ncnn 包，无需额外操作。
 
 可选：
 
 - `./scripts/download_models.sh --include-wdn` 额外下载 wdn 变体（仅供自用，WebGPU 侧没有对应模型）。
 
-> 每个 `.param` + `.bin` 都会被打进 `.data`，页面首次加载要整体拉取。生产环境建议只保留需要的模型。
+> CPU 模型不再打进 `.data`：页面在点击放大后才下载当前选中的 `.param` + `.bin`，并写入 Emscripten 内存文件系统。生产环境只需发布本目录中的四个生产模型。
 > `realesrgan-x2plus` 没有官方 ncnn 包，需要自行转换（见下文「可选：转换 realesrgan-x2plus」），**不要**直接用第三方 HF 粗转包（可能含 `Shape` 层）。
 
 ### 3. 准备路线 B（WebGPU 发布资源）
 
-首次构建 `dist/` 前，需要 Python + PyTorch + onnx + Node.js 生成 ONNX 和 ORT 资源（依赖说明见「环境要求」）：
+首次构建 `dist/` 前，需要 Python + PyTorch + onnx + Node.js 生成 CPU 与 WebGPU 资源（依赖说明见「环境要求」）：
 
 ```bash
-./scripts/prepare_webgpu_models.sh --skip-x2plus
+./scripts/prepare_models.sh
 ```
 
 该脚本会：
 
-1. 下载官方 `.pth`
+1. 下载官方 ncnn / `.pth` 资源
 2. 导出**固定尺寸** ONNX 到 `web/models-onnx/`
-3. `npm install onnxruntime-web`，复制运行时到 `web/ort/`
+3. 把 CPU 与 WebGPU 清单都收敛到四个生产模型：`realesr-general-x4v3`、`realesr-animevideov3-x4`、`realesrgan-x4plus`（约 67MB）、`realesrgan-x4plus-anime`（约 18MB）
+4. `npm install onnxruntime-web`，复制运行时到 `web/ort/`
 
-`--skip-x2plus` 导出 6 个模型：`realesr-animevideov3-x2/x3/x4`、`realesr-general-x4v3`、`realesrgan-x4plus`（约 67MB）、`realesrgan-x4plus-anime`（约 18MB），与上一步的 CPU 默认列表一一对应，manifest 里也不会出现 `realesrgan-x2plus`。
+`build.sh` 会把 manifest 列出的 ONNX 与 `models/` 中的四个 CPU `.param`/`.bin` 拷进 `dist/models/`，运行时按选择只下载其中一个模型。
 
-不带 `--skip-x2plus` 时会额外导出 `realesrgan-x2plus`（约 67MB），此时若 CPU 侧没有同名模型，两个后端的列表就不一致——要么按「可选：转换 realesrgan-x2plus」补上 CPU 侧，要么改回 `--skip-x2plus`。
-
-`build.sh` 会把 manifest 列出的 ONNX **全量**拷进 `dist/models/`，不需要的大模型请在生成后删掉再编译。
-
-资源已生成时无需每次重复执行；`build.sh` 只负责校验（manifest 中列出的每个 `.onnx` 必须存在）并打包它们。
+资源已生成时无需每次重复执行；`build.sh` 只负责校验（manifest 中列出的每个 `.onnx`、四个 CPU 模型必须存在）并打包它们。
 
 ### 4. 编译路线 A 并组装发布站点
 
@@ -183,10 +178,14 @@ git submodule update --init --recursive
 
 ```text
 dist/
-├── index.html
+├── index.html             # 根入口（静态正文为英语，运行时按浏览器语言切换）
+├── <locale>/index.html    # en zh-Hans zh-Hant fr de es pt ar ru ja ko：预渲染的本地化入口
+├── LICENSE / NOTICE
 ├── statics/v<内容哈希>/   # wasmFeatureDetect.js、webgpu/、ort/，以及 real-esrgan-ncnn-webassembly-simd-threads.js / .wasm / .worker.js
-└── models/v<内容哈希>/    # manifest.json、*.onnx、real-esrgan-ncnn-webassembly-simd-threads.data
+└── models/v<内容哈希>/    # manifest.json、*.onnx、CPU *.param/*.bin（按需下载）
 ```
+
+每个语言入口都由 `scripts/prerender_locales.mjs` 在构建时烘焙好 `<html lang>`、`<title>`、描述、canonical/hreflang、Open Graph、JSON-LD 与静态正文；正文另有一份内联的多语言表，供运行时切换语言使用（页面不再单独请求 `i18n.js`）。
 
 `statics/` 与 `models/` 下各有一个按内容哈希命名的子目录（`v…`），`index.html` 只引用这些带版本号的路径：**资源内容一变，URL 就变**，因此浏览器缓存和 CDN（Cloudflare 等）都不可能拿上一次构建的响应来回答新构建。这一点对 CPU 后端是硬要求——静态资源通常被缓存 30 天，而缺少 `Cross-Origin-Embedder-Policy` 的旧响应会让 Chrome 拦截 pthread worker，页面就会卡在「正在加载 CPU WASM 与模型资源…」。内容没变时哈希不变，缓存依旧有效。
 
@@ -275,7 +274,7 @@ server {
 
 ## 可选：转换 `realesrgan-x2plus`（CPU ncnn）
 
-`realesrgan-x2plus`（x2）官方只发布了 `.pth`，没有 ncnn 包，需要在本机转换一次；想让它两个后端都可用，GPU 侧准备资源时就不要加 `--skip-x2plus`。
+`realesrgan-x2plus`（x2）官方只发布了 `.pth`，没有 ncnn 包，需要在本机转换一次；想让它两个后端都可用，CPU 侧按本节转换，GPU 侧准备资源时去掉 `--skip-x2plus` 并同步 `web/models-onnx/manifest.json`（`build.sh` 会校验两侧清单一致）。
 
 ```bash
 # 1) 准备主机端工具（只需一次；需要 cmake / protoc / C++ 工具链）
@@ -331,10 +330,10 @@ server {
 | WebGPU 提示找不到 `dist/statics/ort/ort.webgpu.min.js` | 运行 `./scripts/prepare_webgpu_models.sh`，再重新 `./build.sh` |
 | 子模块为空 | `git submodule update --init --recursive` |
 | `Unable to find onnx2ncnn` / `ncnnoptimize` | 先运行 `./scripts/build_ncnn_tools.sh`（需要 `protoc` 与 C++ 工具链），产物会自动落到 `_convert/ncnn-build/tools/` |
-| CPU 与 WebGPU 的模型列表不一致 | 两侧要一起加减：CPU 侧用 `./scripts/convert_x2plus.sh`，GPU 侧准备资源时不要加 `--skip-x2plus`；只保留 6 个模型则统一用 `--skip-x2plus` |
+| CPU 与 WebGPU 的模型列表不一致 | 运行 `./scripts/prepare_models.sh` 把两侧清单统一收敛到四个生产模型；可选模型按需同时补到 CPU 与 ONNX 侧 |
 | WebGPU 报 Shape mismatch / buffer reuse | 使用本仓库脚本导出的**固定尺寸** ONNX，不要用错误共用 `height`/`width` 符号维的动态模型 |
 | ORT 找不到 `.mjs` | 重新运行 `./scripts/prepare_webgpu_models.sh`，确保 `web/ort/` 含全部 `ort-wasm-simd-threaded.*`，再重新 `./build.sh` |
-| 首次加载很慢 / 内存爆 | `models/` 里每个模型都会打进 `.data`（默认 6 个约 49MB），页面首次加载要整体拉取；生产环境只保留需要的模型再编译 |
+| 首次加载很慢 / 内存爆 | CPU 只下载当前选中的 `.param` + `.bin`；WebGPU 在首次使用某个模型时下载对应 `.onnx`。若发布目录混入非生产模型，可在构建前清理 `models/` 与 `web/models-onnx/` |
 | 中国大陆拉 GitHub 失败 | 配置代理 / VPN 后再拉子模块与模型 |
 
 ---

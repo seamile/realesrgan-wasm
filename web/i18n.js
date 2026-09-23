@@ -16,4 +16,8 @@ if (T[locale]) {
   lang = locale;
   document.getElementById("lang").value = lang;
   render();
+} else if (T[lang]) {
+  // Root entry: the first script picked the browser language before the
+  // translation table was loaded, so render again now that T[lang] exists.
+  render();
 }

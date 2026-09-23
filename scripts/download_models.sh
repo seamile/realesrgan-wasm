@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Download the default ncnn models into models/.
-# Everything in models/ is packed into the WASM .data on the next build.
+# The build publishes models/ and the page downloads only the selected model at runtime.
 #
 # Usage:
 #   ./scripts/download_models.sh
@@ -111,7 +111,7 @@ done < <(find "$extract" -type f -name 'realesrgan-x4plus*' -print0)
 
 echo
 echo "Done. Models in $DEST"
-echo "Note: everything in models/ is packed into the WASM .data on the next build."
+echo "Note: the build publishes models/; the page downloads only the selected model at runtime."
 echo "Optional wdn variant (CPU): ./scripts/download_models.sh --include-wdn"
 echo "Optional x2plus (CPU):      ./scripts/convert_x2plus.sh (needs ncnn host tools)"
 echo "Optional WebGPU ONNX:       ./scripts/prepare_webgpu_models.sh"

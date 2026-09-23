@@ -136,10 +136,14 @@
     }
 
     async ensureOrt() {
-      if (typeof ort === "undefined") {
+      // IMPORTANT: use global.ort explicitly. A top-level `function ort(){}`
+      // loader in the page once shadowed the library global, leaving `ort`
+      // defined but without env; never let that class of collision recur.
+      const lib = global.ort;
+      if (!lib) {
         throw new Error("onnxruntime-web not loaded (ort global missing)");
       }
-      if (!ort.env) {
+      if (!lib.env) {
         throw new Error("onnxruntime-web did not expose its environment");
       }
       if (!this.ortConfigured) {
@@ -148,12 +152,12 @@
         // The WebGPU bundle may expose env before it creates the optional WASM
         // settings object. Language pages also live one directory below root,
         // so runtime assets must use root-relative URLs.
-        ort.env.wasm = ort.env.wasm || {};
-        ort.env.wasm.wasmPaths = new URL("statics/ort/", global.location.href).href;
-        ort.env.wasm.numThreads = Math.min(4, navigator.hardwareConcurrency || 2);
+        lib.env.wasm = lib.env.wasm || {};
+        lib.env.wasm.wasmPaths = new URL("statics/ort/", global.location.href).href;
+        lib.env.wasm.numThreads = Math.min(4, navigator.hardwareConcurrency || 2);
         // Prefer dGPU when the browser honors it (currently ignored on Windows Chrome).
-        ort.env.webgpu = ort.env.webgpu || {};
-        ort.env.webgpu.powerPreference = "high-performance";
+        lib.env.webgpu = lib.env.webgpu || {};
+        lib.env.webgpu.powerPreference = "high-performance";
         this.ortConfigured = true;
       }
     }
@@ -161,8 +165,8 @@
     /** Best-effort GPU label for UI (after session create, ort may expose adapter). */
     async getAdapterLabel() {
       try {
-        if (ort && ort.env && ort.env.webgpu && ort.env.webgpu.adapter) {
-          const info = await ort.env.webgpu.adapter.requestAdapterInfo();
+        if (global.ort && global.ort.env && global.ort.env.webgpu && global.ort.env.webgpu.adapter) {
+          const info = await global.ort.env.webgpu.adapter.requestAdapterInfo();
           return (info && (info.description || info.device || info.vendor)) || "WebGPU adapter";
         }
         const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
@@ -190,7 +194,7 @@
         this.session = null;
       }
       const path = "models/" + model.file;
-      this.session = await ort.InferenceSession.create(path, {
+      this.session = await global.ort.InferenceSession.create(path, {
         executionProviders: ["webgpu"],
         graphOptimizationLevel: "all"
       });
@@ -228,7 +232,7 @@
           const tileW = Math.min(TILE, w - tileX);
 
           const data = extractFixedTileNCHW(rgba, w, h, tileX, tileY, tileW, tileH, PAD, inSize);
-          const tensor = new ort.Tensor("float32", data, [1, 3, inSize, inSize]);
+          const tensor = new global.ort.Tensor("float32", data, [1, 3, inSize, inSize]);
           const feeds = {};
           feeds[model.input] = tensor;
           const results = await this.session.run(feeds);

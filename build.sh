@@ -99,7 +99,6 @@ rm -rf "$TMP_DIST"
 mkdir -p "$TMP_DIST/statics/webgpu" "$TMP_DIST/statics/ort" "$TMP_DIST/models"
 
 cp -f "$WEB/index.html" "$TMP_DIST/index.html"
-cp -f "$WEB/i18n.js" "$TMP_DIST/i18n.js"
 cp -f ./LICENSE "$TMP_DIST/LICENSE"
 cp -f ./NOTICE "$TMP_DIST/NOTICE"
 cp -f "$WEB/robots.txt" "$TMP_DIST/robots.txt"
@@ -108,21 +107,29 @@ cp -f "$WEB/sitemap.xml" "$TMP_DIST/sitemap.xml"
 cp -f "$WEB/wasmFeatureDetect.js" "$TMP_DIST/statics/"
 cp -f "$WEB/webgpu/realesrgan-webgpu.js" "$TMP_DIST/statics/webgpu/"
 
-cp -f "$ORT_DIR"/* "$TMP_DIST/statics/ort/"
+# ort.webgpu.min.js (1.27) is built with the asyncify wasm variant enabled;
+# the jsep/jspi/plain variants are dead code in this bundle. Publish only what
+# the bundle can actually request instead of copying ~78MB of unused WASM.
+cp -f "$ORT_DIR/ort.webgpu.min.js" "$TMP_DIST/statics/ort/"
+cp -f "$ORT_DIR/ort-wasm-simd-threaded.asyncify.mjs" "$TMP_DIST/statics/ort/"
+cp -f "$ORT_DIR/ort-wasm-simd-threaded.asyncify.wasm" "$TMP_DIST/statics/ort/"
 
 ARTIFACT=real-esrgan-ncnn-webassembly-simd-threads
-for asset in "$ARTIFACT.js" "$ARTIFACT.wasm" "$ARTIFACT.worker.js" "$ARTIFACT.data"; do
+for asset in "$ARTIFACT.js" "$ARTIFACT.wasm" "$ARTIFACT.worker.js"; do
   require_file "$BUILD/$asset" "Emscripten build did not produce $asset."
 done
 cp -f "$BUILD/$ARTIFACT.js" "$TMP_DIST/statics/"
 cp -f "$BUILD/$ARTIFACT.wasm" "$TMP_DIST/statics/"
 cp -f "$BUILD/$ARTIFACT.worker.js" "$TMP_DIST/statics/"
-# Keep Emscripten's generated JS, WASM, worker and data package together so
-# its default relative loader works identically from root and locale routes.
-cp -f "$BUILD/$ARTIFACT.data" "$TMP_DIST/statics/"
 
 cp -f "$ONNX_DIR/manifest.json" "$TMP_DIST/models/"
 cp -f "$ONNX_DIR"/*.onnx "$TMP_DIST/models/"
+# CPU models are fetched one at a time and written into MEMFS at runtime. Keep
+# them under the versioned models/ directory so they share HTTP cache busting.
+for model in realesr-general-x4v3 realesr-animevideov3-x4 realesrgan-x4plus realesrgan-x4plus-anime; do
+  cp -f "./models/$model.param" "$TMP_DIST/models/"
+  cp -f "./models/$model.bin" "$TMP_DIST/models/"
+done
 
 # --- Cache-busting version directories -------------------------------------
 # CDNs (Cloudflare in front of 4x.pixcc.net) and browsers cache statics/ and
@@ -177,10 +184,15 @@ check_versions() {
   for pair in "statics:$STATIC_DIR" "models:$MODEL_DIR"; do
     prefix=${pair%%:*}
     version=${pair##*:}
-    total=$(grep -o "\"$prefix/" "$file" | wc -l | tr -d ' ')
-    versioned=$(grep -o "\"$prefix/$version/" "$file" | wc -l | tr -d ' ')
-    if [ "$total" != "$versioned" ]; then
-      echo "Unversioned \"$prefix/ URL left in $file ($versioned of $total versioned)." >&2
+    versioned=$(grep -o "/$prefix/$version/" "$file" | wc -l | tr -d ' ')
+    if [ "$versioned" = "0" ]; then
+      echo "No versioned /$prefix/$version/ URL was written to $file." >&2
+      exit 1
+    fi
+    # Any remaining bare prefix means a loadable path escaped the rewrite.
+    bare=$(grep -oE "(^|[^/A-Za-z0-9_])$prefix/" "$file" | grep -v "/$version/" | wc -l | tr -d ' ')
+    if [ "$bare" != "0" ]; then
+      echo "Unversioned $prefix/ URL left in $file." >&2
       exit 1
     fi
   done
@@ -192,18 +204,38 @@ MODEL_DIR="v$(content_id "$TMP_DIST/models")"
 version_dir "$TMP_DIST/statics" "$STATIC_DIR"
 version_dir "$TMP_DIST/models" "$MODEL_DIR"
 
-# Rewrite only quoted URL prefixes, so prose that mentions statics/ or models/
-# (the hints paragraph) is left alone; every loadable path is written quoted.
+# Make every statics/ and models/ URL root-relative and versioned. The sed
+# intentionally matches the bare prefixes anywhere, including inside single
+# quoted JS strings; check_versions below then verifies nothing was missed.
 rewrite_asset_paths "$TMP_DIST/index.html"
 rewrite_asset_paths "$TMP_DIST/statics/$STATIC_DIR/webgpu/realesrgan-webgpu.js"
 # Every locale uses root-relative, content-versioned assets. This avoids
-# duplicating fragile ../ path rewriting for nested language routes.
-for locale in en zh-Hans zh-Hant fr de es pt ar ru ja ko; do
-  mkdir -p "$TMP_DIST/$locale"
-  sed "s|fetch('LICENSE')|fetch('/LICENSE')|" "$TMP_DIST/index.html" > "$TMP_DIST/$locale/index.html"
-done
+# duplicating fragile ../ path rewriting for nested language routes. web/i18n.js
+# is inlined into the page at build time, so each entry both ships every
+# translation and (via scripts/prerender_locales.mjs) bakes the matching locale
+# into <html lang>, <title>, metadata and the static body copy.
+LOCALES="en zh-Hans zh-Hant fr de es pt ar ru ja ko"
+if ! grep -q "Object.assign(T," "$TMP_DIST/index.html"; then
+  echo "web/index.html does not inline the translation table (expected 'Object.assign(T, {')." >&2
+  exit 1
+fi
+
+if command -v node >/dev/null 2>&1; then
+  node scripts/prerender_locales.mjs "$TMP_DIST/index.html" "$WEB/i18n.js" "$TMP_DIST"
+else
+  # Without Node the translations are still inlined and the runtime picks the
+  # route locale, but the head metadata and static copy stay English.
+  echo "node not found: skipping locale prerender (pages fall back to runtime i18n)." >&2
+  for locale in $LOCALES; do
+    mkdir -p "$TMP_DIST/$locale"
+    cp -f "$TMP_DIST/index.html" "$TMP_DIST/$locale/index.html"
+  done
+fi
 check_versions "$TMP_DIST/index.html"
 check_versions "$TMP_DIST/statics/$STATIC_DIR/webgpu/realesrgan-webgpu.js"
+for locale in $LOCALES; do
+  check_versions "$TMP_DIST/$locale/index.html"
+done
 
 for asset in \
   index.html \
@@ -214,12 +246,19 @@ for asset in \
   "statics/$STATIC_DIR/real-esrgan-ncnn-webassembly-simd-threads.js" \
   "statics/$STATIC_DIR/real-esrgan-ncnn-webassembly-simd-threads.wasm" \
   "statics/$STATIC_DIR/real-esrgan-ncnn-webassembly-simd-threads.worker.js" \
-  "models/$MODEL_DIR/manifest.json" \
-  "statics/$STATIC_DIR/real-esrgan-ncnn-webassembly-simd-threads.data"; do
+  "models/$MODEL_DIR/manifest.json"; do
   if [ ! -s "$TMP_DIST/$asset" ]; then
     echo "Assembled site is incomplete: missing $asset" >&2
     exit 1
   fi
+done
+for model in realesr-general-x4v3 realesr-animevideov3-x4 realesrgan-x4plus realesrgan-x4plus-anime; do
+  for ext in param bin; do
+    if [ ! -s "$TMP_DIST/models/$MODEL_DIR/$model.$ext" ]; then
+      echo "Assembled site is incomplete: missing CPU model $model.$ext" >&2
+      exit 1
+    fi
+  done
 done
 
 rm -rf ./dist.prev
@@ -238,7 +277,7 @@ trap - EXIT INT TERM
 echo "Build done. Site assembled in ./dist/"
 echo "  dist/index.html              page entry"
 echo "  dist/statics/$STATIC_DIR/    scripts, WASM, pthread worker, ORT runtime"
-echo "  dist/models/$MODEL_DIR/      manifest.json and ONNX models"
+echo "  dist/models/$MODEL_DIR/      manifest.json, ONNX and CPU param/bin models"
 echo "The v* directories are content-derived, so a deploy always gets fresh URLs"
 echo "and neither a browser nor a CDN cache can serve a previous build."
 echo "Serve ./dist/ over HTTP with COOP/COEP headers (see README); the directory is deployable on its own."
