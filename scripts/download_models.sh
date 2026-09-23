@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
-# Download default (small) ncnn models into models/.
+# Download the default ncnn models into models/.
 # Everything in models/ is packed into the WASM .data on the next build.
 #
 # Usage:
 #   ./scripts/download_models.sh
 #   ./scripts/download_models.sh --include-wdn
 #
-# Large realesrgan-x2plus is NOT downloaded here (HF dumps may contain Shape ops).
-# Convert it with the official pipeline: ./scripts/convert_x2plus.sh
+# Defaults mirror the WebGPU model list (web/models-onnx/manifest.json):
+#   realesr-animevideov3-x2/x3/x4, realesr-general-x4v3,
+#   realesrgan-x4plus (~33MB), realesrgan-x4plus-anime (~9MB)
+# The last two come out of the official package already downloaded below.
+#
+# realesrgan-x2plus has no official ncnn build; convert it locally with the
+# official pipeline: ./scripts/convert_x2plus.sh
 
 set -euo pipefail
 
@@ -18,7 +23,7 @@ INCLUDE_WDN=0
 PYTHON="${PYTHON:-python3}"
 
 usage() {
-    sed -n '2,10p' "$0"
+    sed -n '2,16p' "$0"
 }
 
 file_size() {
@@ -101,8 +106,14 @@ if (( ! found )); then
     exit 1
 fi
 
+while IFS= read -r -d '' model; do
+    cp -f "$model" "$DEST/"
+    echo "Copied $(basename "$model")"
+done < <(find "$extract" -type f -name 'realesrgan-x4plus*' -print0)
+
 echo
 echo "Done. Models in $DEST"
 echo "Note: everything in models/ is packed into the WASM .data on the next build."
-echo "Optional large x2plus (CPU): ./scripts/convert_x2plus.sh"
+echo "Optional wdn variant (CPU): ./scripts/download_models.sh --include-wdn"
+echo "Optional x2plus (CPU):      ./scripts/convert_x2plus.sh (needs ncnn host tools)"
 echo "Optional WebGPU ONNX:       ./scripts/prepare_webgpu_models.sh"

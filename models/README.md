@@ -18,6 +18,10 @@
 ./scripts/download_models.sh --include-wdn
 ```
 
+默认下载的模型与 WebGPU 清单（`web/models-onnx/manifest.json`）一致，只是
+`realesrgan-x2plus` 没有官方 ncnn 产物，需要自行转换（见下）。下载完
+`models/` 约 51MB，会整体打进 `.data`。
+
 然后重新编译（组装 `dist/`）：
 
 ```bash
@@ -38,9 +42,11 @@ models/
 
 | 模型 | 倍率 | 大小 | 说明 |
 |------|------|------|------|
-| realesr-animevideov3-x2/x3/x4 | 2/3/4 | ~1.2MB | 官方 ncnn-vulkan 包 |
-| realesr-general-x4v3 | 4 | ~4.6MB | additional-models |
-| realesrgan-x2plus | 2 | ~33MB fp16 | 用 `scripts/convert_x2plus.sh` 官方流程转换，勿用含 Shape 的粗转包 |
+| realesr-animevideov3-x2/x3/x4 | 2/3/4 | ~1.2MB | 官方 ncnn-vulkan 包（默认下载） |
+| realesr-general-x4v3 | 4 | ~4.6MB | additional-models（默认下载） |
+| realesrgan-x4plus | 4 | ~33MB | 官方 ncnn-vulkan 包（默认下载） |
+| realesrgan-x4plus-anime | 4 | ~9MB | 官方 ncnn-vulkan 包，6B 变体（默认下载） |
+| realesrgan-x2plus | 2 | ~33MB fp16 | 无官方 ncnn 产物，用 `scripts/convert_x2plus.sh` 转换，勿用含 Shape 的粗转包 |
 
 ## 注意
 

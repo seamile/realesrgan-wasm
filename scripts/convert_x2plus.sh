@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Official-style conversion: RealESRGAN_x2plus.pth -> clean ncnn model.
 #
+# ./scripts/build_ncnn_tools.sh builds onnx2ncnn + ncnnoptimize into
+# _convert/ncnn-build/tools/, where this script finds them automatically.
+#
 # Set NCNN_ONNX2NCNN and NCNNOPTIMIZE when the tools are not on PATH, e.g.:
 #   NCNN_ONNX2NCNN=/path/to/onnx2ncnn NCNNOPTIMIZE=/path/to/ncnnoptimize \
 #     ./scripts/convert_x2plus.sh
@@ -39,7 +42,7 @@ find_tool() {
             return
         fi
     done
-    echo "Unable to find $name. Install/build it, put it on PATH, or set the corresponding environment variable." >&2
+    echo "Unable to find $name. Run ./scripts/build_ncnn_tools.sh, install/build it, put it on PATH, or set the corresponding environment variable." >&2
     exit 1
 }
 

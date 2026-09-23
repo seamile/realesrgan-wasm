@@ -5,6 +5,7 @@ Uses dynamic H/W so the JS engine can tile with variable sizes (like ncnn Route 
 from __future__ import annotations
 
 import argparse
+import inspect
 from pathlib import Path
 
 import torch
@@ -161,8 +162,9 @@ def export_onnx(model: nn.Module, out_path: Path, size: int = 64, dynamic: bool 
         input_names=["data"],
         output_names=["output"],
         do_constant_folding=True,
-        dynamo=False,
     )
+    if "dynamo" in inspect.signature(torch.onnx.export).parameters:
+        export_kw["dynamo"] = False
     if dynamic:
         export_kw["dynamic_axes"] = {
             "data": {2: "in_height", 3: "in_width"},

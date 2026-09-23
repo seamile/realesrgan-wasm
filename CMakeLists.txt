@@ -1,6 +1,6 @@
-project(real-esrgan-ncnn-webassembly)
-
 cmake_minimum_required(VERSION 3.10)
+
+project(real-esrgan-ncnn-webassembly)
 
 option(LOCAL_DEBUG "debug" OFF)
 

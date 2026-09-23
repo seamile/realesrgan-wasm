@@ -6,6 +6,7 @@ so ONNX export stays free of dynamic Shape ops when possible.
 from __future__ import annotations
 
 import argparse
+import inspect
 from pathlib import Path
 
 import torch
@@ -111,18 +112,19 @@ def main():
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
+    export_kw = dict(
+        opset_version=11,
+        input_names=["data"],
+        output_names=["output"],
+        dynamic_axes=None,  # fixed shapes -> fewer Shape nodes
+        do_constant_folding=True,
+    )
+    # torch < 2.5 has no "dynamo" argument (legacy exporter is already the default there)
+    if "dynamo" in inspect.signature(torch.onnx.export).parameters:
+        export_kw["dynamo"] = False  # classic exporter, friendlier to onnx2ncnn
+
     with torch.no_grad():
-        torch.onnx.export(
-            model,
-            x,
-            str(out_path),
-            opset_version=11,
-            input_names=["data"],
-            output_names=["output"],
-            dynamic_axes=None,  # fixed shapes -> fewer Shape nodes
-            do_constant_folding=True,
-            dynamo=False,  # classic exporter, friendlier to onnx2ncnn
-        )
+        torch.onnx.export(model, x, str(out_path), **export_kw)
         y = model(x)
     print(f"exported {out_path}  input={tuple(x.shape)} output={tuple(y.shape)}")
 

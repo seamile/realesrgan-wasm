@@ -20,11 +20,12 @@ cd real-esrgan-ncnn-webassembly
 # 1) Install the Emscripten SDK once; build.sh loads its environment automatically
 (cd emsdk && ./emsdk install 3.1.28 && ./emsdk activate 3.1.28)
 
-# 2) Default small CPU models
+# 2) Default CPU models (6 models, ~49MB; the same list as the WebGPU manifest)
 ./scripts/download_models.sh
 
-# 3) WebGPU publish assets (Python + PyTorch + Node.js; required for the first release build)
-./scripts/prepare_webgpu_models.sh
+# 3) WebGPU publish assets (Python 3 + PyTorch + onnx + Node.js; required for the first release build)
+#    --skip-x2plus keeps the WebGPU list identical to the CPU one above
+./scripts/prepare_webgpu_models.sh --skip-x2plus
 
 # 4) Build Route A and assemble dist/
 ./build.sh
@@ -55,11 +56,19 @@ before replacing an existing `dist/` and tells you which preparation script to r
 
 ### Requirements
 
-- Git, CMake, Emscripten 3.1.28+, Ninja (recommended)
-- Go (for `local_server.go`) or any static server that sets COOP/COEP (e.g. nginx)
-- Python 3 + PyTorch and Node.js to generate WebGPU assets (not needed again while those assets remain prepared)
-- Linux / macOS
-- Desktop Chrome/Edge/Firefox; **no iOS**
+- Linux / macOS.
+- Git, CMake 3.10+, a C/C++ toolchain and Emscripten **3.1.28**. `build.sh` uses the default CMake
+  generator (Ninja is not required) and hardcodes `-j4`.
+- `curl` or `wget` to download models and ORT assets, plus `unzip` or Python 3 to unpack the official
+  ncnn model zip. `build.sh` also needs one of `sha256sum` / `shasum` / `openssl` for the content-hash
+  directory names.
+- Go (**optional**) for `local_server.go`, or any static server that sets COOP/COEP (e.g. nginx).
+- Python 3 + PyTorch + onnx, and Node.js, to generate WebGPU assets (`prepare_webgpu_models.sh`); not
+  needed again while those assets remain prepared.
+- `protoc` + libprotobuf + a C++17 compiler (macOS `brew install protobuf`, Debian/Ubuntu
+  `apt install protobuf-compiler libprotobuf-dev`) only for `build_ncnn_tools.sh`, which builds
+  `onnx2ncnn` — needed for a CPU `realesrgan-x2plus`.
+- Desktop Chrome/Edge/Firefox; **no iOS**.
 
 ## Deploying to nginx
 
@@ -130,9 +139,7 @@ than serving it from a home directory), then run `nginx -t && systemctl reload n
 - **CPU:** put `.param`+`.bin` in `models/`, then re-run `./build.sh`.
 - **WebGPU:** put fixed-shape `.onnx` under `web/models-onnx/`, update `manifest.json`, then re-run `./build.sh`.
 
-`prepare_webgpu_models.sh` exports `realesr-animevideov3-x2/x3/x4`, `realesr-general-x4v3`,
-`realesrgan-x2plus` (~67MB), `realesrgan-x4plus` (~67MB) and `realesrgan-x4plus-anime` (~18MB).
-`build.sh` copies all of them into `dist/models/`; delete the large ones you do not ship before building.
+`prepare_webgpu_models.sh` exports `realesr-animevideov3-x2/x3/x4`, `realesr-general-x4v3`, `realesrgan-x4plus` (~67MB) and `realesrgan-x4plus-anime` (~18MB); drop `--skip-x2plus` to also export `realesrgan-x2plus` (~67MB). Keep both backends in sync: either skip x2plus on the WebGPU side, or add it to the CPU side with `./scripts/build_ncnn_tools.sh` + `./scripts/convert_x2plus.sh` (official weights only — third-party "rough" ONNX conversions tend to contain `Shape` layers). `build.sh` copies every model listed in `manifest.json` into `dist/models/`; delete the large ones you do not ship before building.
 `realesrgan-x4plus` skips `pixel_unshuffle`, so its RRDB body runs at full tile resolution — about
 4x the body activations of x2plus at the same `tilesize`.
 

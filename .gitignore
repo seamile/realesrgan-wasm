@@ -37,3 +37,4 @@ Thumbs.db
 # AI Agents
 .agents_tmp/
 .openhands/
+.serena/

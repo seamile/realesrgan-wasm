@@ -41,8 +41,9 @@ English: see [README_EN.md](README_EN.md)
 │   ├── statics/                              # 脚本、WASM、pthread worker、ORT
 │   └── models/                               # manifest.json、ONNX、CPU .data
 └── scripts/
-    ├── download_models.sh                    # 下载默认小模型
-    ├── prepare_webgpu_models.sh              # 导出 ONNX + 安装 ORT
+    ├── download_models.sh                    # 下载 CPU ncnn 模型（默认含 x4plus / x4plus-anime）
+    ├── prepare_webgpu_models.sh              # 导出 ONNX + 安装 ORT（--skip-x2plus 与 CPU 侧对齐）
+    ├── build_ncnn_tools.sh                   # 本机编译 onnx2ncnn / ncnnoptimize（仅转换 x2plus 时需要）
     ├── convert_x2plus.sh                     # 转换 x2plus -> ncnn
     └── pytorch2onnx_*.py
 ```
@@ -53,17 +54,50 @@ English: see [README_EN.md](README_EN.md)
 
 ## 环境要求
 
-| 依赖 | 用途 | 备注 |
+### 必需（克隆 + 编译路线 A + 组装 `dist/`）
+
+| 依赖 | 用途 | 说明 |
 |------|------|------|
-| Git | 克隆仓库 + 子模块 | 需能访问 GitHub |
-| [Emscripten](https://emscripten.org/) 3.1.28+ | 编译路线 A | Linux / macOS 见下方安装示例 |
-| CMake 3.10+ | 构建 | |
-| Ninja（推荐） | 加快编译 | `pip install ninja` 即可 |
-| Go 1.18+（可选） | `local_server.go` | 也可用 nginx 等能加 COOP/COEP 头的静态服务器 |
-| Python 3.9+ + PyTorch（可选） | 仅准备 WebGPU ONNX / 转换 x2plus 时需要 | |
-| Node.js 18+ / npm（可选） | 仅准备 WebGPU 时安装 onnxruntime-web | |
-| curl 或 wget | 下载模型与 ORT 资源 | macOS 无需额外安装 `unzip` |
-| 浏览器 | Chrome / Edge（WebGPU）或支持 WASM SIMD+pthread 的桌面浏览器 | **不支持 iOS** |
+| Git | 克隆仓库与 `ncnn/`、`emsdk/` 子模块 | 需能访问 GitHub |
+| sh / bash + coreutils | 运行 `build.sh` 与 `scripts/*.sh` | Linux / macOS 自带 |
+| CMake 3.10+ | 配置并驱动构建 | 实测 4.4.3；`build.sh` 用默认生成器，**不要求 Ninja** |
+| C/C++ 工具链 | Emscripten 编译底座、本机编译 `onnx2ncnn` | macOS 装 Xcode Command Line Tools；Linux 用 gcc / clang |
+| [Emscripten](https://emscripten.org/) **3.1.28** | 编译路线 A | 由 `emsdk/` 子模块安装，见下方示例；`build.sh` 会自动 `emsdk_env.sh` |
+| curl 或 wget | 下载模型与 ORT 资源 | 二选一，脚本自动探测 |
+| `sha256sum` / `shasum` / `openssl` | `build.sh` 计算内容哈希目录名 | 有其一即可；macOS 自带 `shasum` |
+| Python 3.9+（`$PYTHON`，默认 `python3`） | `download_models.sh` 解压官方 ncnn 包 | 脚本启动时会校验解释器存在；解压优先用 `unzip`，没有 `unzip` 时用 Python `zipfile` |
+| 浏览器 | 打开页面 | Chrome / Edge（WebGPU），或支持 WASM SIMD + pthread 的桌面浏览器；**不支持 iOS** |
+
+### 按需安装（用到相应脚本时才需要）
+
+| 依赖 | 何时需要 | 安装 |
+|------|----------|------|
+| Python 3.9+ + PyTorch + onnx | `prepare_webgpu_models.sh`（导出 ONNX）、`convert_x2plus.sh`（转换 x2plus） | 见下方「Python 环境」 |
+| Node.js 18+ / npm | `prepare_webgpu_models.sh` 下载 onnxruntime-web 到 `web/ort/` | 能用 `npm -v` 即可 |
+| `protoc` + libprotobuf + C++17 编译器 | `build_ncnn_tools.sh` 编译 `onnx2ncnn`（上游 ncnn 已不再默认编译它）；仅在需要 CPU 版 x2plus 时使用 | macOS `brew install protobuf`；Debian/Ubuntu `apt install protobuf-compiler libprotobuf-dev`。有 `pkg-config` 最好，没有则回退到 `brew --prefix protobuf` |
+| Go 1.18+ | 用 `local_server.go` 本地预览 `dist/` | 也可改用 nginx（见下文），此时不需要 Go |
+
+`build.sh` 的并行度写死为 `-j4`，机器更强可自行修改。
+
+### Python 环境（准备路线 B / 转换 x2plus 时）
+
+三个脚本都用 `$PYTHON` 指定解释器（默认 `python3`），建议单独建虚拟环境：
+
+```bash
+python3 -m venv .venv && . .venv/bin/activate
+pip install torch onnx                  # torch 用 CPU 版即可
+export PYTHON="$PWD/.venv/bin/python"   # 后续脚本都会用它
+```
+
+自检：
+
+```bash
+"$PYTHON" -c 'import torch, onnx; print(torch.__version__, onnx.__version__)'
+```
+
+- `torch` 只用于导出，不需要 GPU / CUDA；`onnx` 是 `torch.onnx.export` 的运行时依赖。
+- 导出脚本用 `inspect` 探测 `torch.onnx.export` 是否有 `dynamo` 参数：老版本 torch 直接用默认（经典）导出器，torch ≥ 2.9 会显式传 `dynamo=False`。`onnx2ncnn` 只认经典导出器的图，这一步决定了转换能否成功。
+- 本仓库验证过的组合：macOS（x86_64）+ Emscripten 3.1.28、CMake 4.4.3、Node 24、Go 1.27、protobuf 36.1、Python 3.14 + torch 2.14 + onnx 1.23。
 
 ### 安装 Emscripten（Linux / macOS，首次构建前执行一次）
 
@@ -95,31 +129,34 @@ cd real-esrgan-ncnn-webassembly
 git submodule update --init --recursive
 ```
 
-### 2. 下载默认 CPU 小模型
+### 2. 下载 CPU 模型
 
 ```bash
 ./scripts/download_models.sh
 ```
 
-默认包含：
+默认与 WebGPU 侧的准备脚本默认导出同一批模型（`web/models-onnx/manifest.json`），共 6 个、约 49MB：
 
+- `realesr-animevideov3-x2/x3/x4`（动漫，各约 1.2MB）
 - `realesr-general-x4v3`（照片 4x，约 4.6MB）
-- `realesr-animevideov3-x2/x3/x4`（动漫）
+- `realesrgan-x4plus`（照片 4x，约 33MB）
+- `realesrgan-x4plus-anime`（动漫 4x，6B 版，约 9MB）
+
+后两个取自脚本本来就会下载的官方 ncnn 包，无需额外操作。
 
 可选：
 
-- `./scripts/download_models.sh --include-wdn`
+- `./scripts/download_models.sh --include-wdn` 额外下载 wdn 变体（仅供自用，WebGPU 侧没有对应模型）。
 
-额外下载 wdn 变体。
-
-> 大模型 `realesrgan-x2plus` **不要**直接下 HF 粗转包（可能含 `Shape` 层）。请用官方转换脚本（见下文「可选：x2plus」）。
+> 每个 `.param` + `.bin` 都会被打进 `.data`，页面首次加载要整体拉取。生产环境建议只保留需要的模型。
+> `realesrgan-x2plus` 没有官方 ncnn 包，需要自行转换（见下文「可选：转换 realesrgan-x2plus」），**不要**直接用第三方 HF 粗转包（可能含 `Shape` 层）。
 
 ### 3. 准备路线 B（WebGPU 发布资源）
 
-首次构建 `dist/` 前，需要 Python + PyTorch + Node.js 生成 ONNX 和 ORT 资源：
+首次构建 `dist/` 前，需要 Python + PyTorch + onnx + Node.js 生成 ONNX 和 ORT 资源（依赖说明见「环境要求」）：
 
 ```bash
-./scripts/prepare_webgpu_models.sh
+./scripts/prepare_webgpu_models.sh --skip-x2plus
 ```
 
 该脚本会：
@@ -128,9 +165,13 @@ git submodule update --init --recursive
 2. 导出**固定尺寸** ONNX 到 `web/models-onnx/`
 3. `npm install onnxruntime-web`，复制运行时到 `web/ort/`
 
-导出的 WebGPU 模型：`realesr-animevideov3-x2/x3/x4`、`realesr-general-x4v3`、`realesrgan-x2plus`（约 67MB）、`realesrgan-x4plus`（约 67MB）、`realesrgan-x4plus-anime`（约 18MB）。`build.sh` 会把它们**全量**拷进 `dist/models/`，不需要的大模型请在生成后删掉再编译。
+`--skip-x2plus` 导出 6 个模型：`realesr-animevideov3-x2/x3/x4`、`realesr-general-x4v3`、`realesrgan-x4plus`（约 67MB）、`realesrgan-x4plus-anime`（约 18MB），与上一步的 CPU 默认列表一一对应，manifest 里也不会出现 `realesrgan-x2plus`。
 
-资源已生成时无需每次重复执行；`build.sh` 只负责校验并打包它们。
+不带 `--skip-x2plus` 时会额外导出 `realesrgan-x2plus`（约 67MB），此时若 CPU 侧没有同名模型，两个后端的列表就不一致——要么按「可选：转换 realesrgan-x2plus」补上 CPU 侧，要么改回 `--skip-x2plus`。
+
+`build.sh` 会把 manifest 列出的 ONNX **全量**拷进 `dist/models/`，不需要的大模型请在生成后删掉再编译。
+
+资源已生成时无需每次重复执行；`build.sh` 只负责校验（manifest 中列出的每个 `.onnx` 必须存在）并打包它们。
 
 ### 4. 编译路线 A 并组装发布站点
 
@@ -234,16 +275,30 @@ server {
 
 ## 可选：转换 `realesrgan-x2plus`（CPU ncnn）
 
+`realesrgan-x2plus`（x2）官方只发布了 `.pth`，没有 ncnn 包，需要在本机转换一次；想让它两个后端都可用，GPU 侧准备资源时就不要加 `--skip-x2plus`。
+
 ```bash
-# 1) 下载官方权重到 _convert/RealESRGAN_x2plus.pth
-# 2) 准备 onnx2ncnn / ncnnoptimize
-#    脚本从 PATH 查找，也可通过 NCNN_ONNX2NCNN / NCNNOPTIMIZE 指定路径。
-# 3) 运行：
+# 1) 准备主机端工具（只需一次；需要 cmake / protoc / C++ 工具链）
+./scripts/build_ncnn_tools.sh
+#    产物落在 _convert/ncnn-build/tools/，convert_x2plus.sh 会自动找到；
+#    也可以放到 PATH，或用 NCNN_ONNX2NCNN / NCNNOPTIMIZE 指定路径。
+
+# 2) 准备官方权重 _convert/RealESRGAN_x2plus.pth
+#    跑过不带 --skip-x2plus 的 prepare_webgpu_models.sh 就已经有了；
+#    否则从 Real-ESRGAN v0.2.1 的 release 下载 RealESRGAN_x2plus.pth 放到 _convert/。
+
+# 3) 转换并安装到 models/
 ./scripts/convert_x2plus.sh
-# 4) 重新 ./build.sh
+
+# 4) 重新组装发布站点
+./build.sh
 ```
 
-WebGPU 版 x2plus / x4plus / x4plus-anime 由 `prepare_webgpu_models.sh` 一并导出（x2plus、x4plus 各约 67MB，x4plus-anime 约 18MB）。
+`convert_x2plus.sh` 会依次执行导出 ONNX（`pytorch2onnx_x2plus.py`）、`onnx2ncnn`、`ncnnoptimize`（fp16），再把输入 blob 改名为 `data`、确认没有残留 `Shape` 层，最后写入 `models/realesrgan-x2plus.param`（约 0.2MB）与 `.bin`（约 33MB）。
+
+不想保留时：删掉这两个文件，再用 `./scripts/prepare_webgpu_models.sh --skip-x2plus` 重跑一次（会同步清掉 manifest 里的 x2plus），然后重新 `./build.sh`。
+
+> 上游 ncnn 已不再默认编译 `onnx2ncnn`（子模块的 `tools/CMakeLists.txt` 去掉了 `add_subdirectory(onnx)`），所以 `build_ncnn_tools.sh` 是单独对着 protobuf 编译 `ncnn/tools/onnx/onnx2ncnn.cpp` 的。
 
 ---
 
@@ -275,9 +330,11 @@ WebGPU 版 x2plus / x4plus / x4plus-anime 由 `prepare_webgpu_models.sh` 一并�
 | `Emscripten is not installed` | 在 `emsdk/` 中执行 `./emsdk install 3.1.28 && ./emsdk activate 3.1.28` |
 | WebGPU 提示找不到 `dist/statics/ort/ort.webgpu.min.js` | 运行 `./scripts/prepare_webgpu_models.sh`，再重新 `./build.sh` |
 | 子模块为空 | `git submodule update --init --recursive` |
+| `Unable to find onnx2ncnn` / `ncnnoptimize` | 先运行 `./scripts/build_ncnn_tools.sh`（需要 `protoc` 与 C++ 工具链），产物会自动落到 `_convert/ncnn-build/tools/` |
+| CPU 与 WebGPU 的模型列表不一致 | 两侧要一起加减：CPU 侧用 `./scripts/convert_x2plus.sh`，GPU 侧准备资源时不要加 `--skip-x2plus`；只保留 6 个模型则统一用 `--skip-x2plus` |
 | WebGPU 报 Shape mismatch / buffer reuse | 使用本仓库脚本导出的**固定尺寸** ONNX，不要用错误共用 `height`/`width` 符号维的动态模型 |
 | ORT 找不到 `.mjs` | 重新运行 `./scripts/prepare_webgpu_models.sh`，确保 `web/ort/` 含全部 `ort-wasm-simd-threaded.*`，再重新 `./build.sh` |
-| 首次加载很慢 / 内存爆 | `models/` 里大模型会打进 `.data`；生产环境只保留小模型再编译 |
+| 首次加载很慢 / 内存爆 | `models/` 里每个模型都会打进 `.data`（默认 6 个约 49MB），页面首次加载要整体拉取；生产环境只保留需要的模型再编译 |
 | 中国大陆拉 GitHub 失败 | 配置代理 / VPN 后再拉子模块与模型 |
 
 ---

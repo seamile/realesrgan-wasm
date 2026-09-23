@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Prepare ONNX models and onnxruntime-web assets for Route B (WebGPU).
-# Usage: ./scripts/prepare_webgpu_models.sh
+# Usage: ./scripts/prepare_webgpu_models.sh [--skip-x2plus]
+#
+#   --skip-x2plus   do not export realesrgan-x2plus, so the WebGPU list matches
+#                   the default CPU list from scripts/download_models.sh
 
 set -euo pipefail
 
@@ -10,6 +13,17 @@ WEIGHTS="$ROOT/_convert/weights"
 ONNX_DIR="$ROOT/web/models-onnx"
 ORT_DIR="$ROOT/web/ort"
 PYTHON="${PYTHON:-python3}"
+INCLUDE_X2PLUS=1
+
+for arg in "$@"; do
+    case "$arg" in
+        --skip-x2plus) INCLUDE_X2PLUS=0 ;;
+        *)
+            echo "Unknown option: $arg (supported: --skip-x2plus)" >&2
+            exit 1
+            ;;
+    esac
+done
 
 python_ok() {
     command -v "$PYTHON" >/dev/null 2>&1
@@ -58,7 +72,7 @@ download_if_needed "$release/realesr-animevideov3.pth" "$WEIGHTS/realesr-animevi
 download_if_needed "$release/realesr-general-x4v3.pth" "$WEIGHTS/realesr-general-x4v3.pth"
 
 x2pth="$ROOT/_convert/RealESRGAN_x2plus.pth"
-if [[ ! -f "$x2pth" ]]; then
+if (( INCLUDE_X2PLUS )) && [[ ! -f "$x2pth" ]]; then
     download_if_needed "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth" "$x2pth"
 fi
 
@@ -93,9 +107,13 @@ export_onnx realesr-general-x4v3.onnx \
     --output "$ONNX_DIR/realesr-general-x4v3.onnx" --scale 4 --num-conv 32 --size 148
 
 # tilesize=64, prepadding=10 -> 84 (even for pixel_unshuffle)
-export_onnx realesrgan-x2plus.onnx \
-    --arch rrdb --input "$x2pth" \
-    --output "$ONNX_DIR/realesrgan-x2plus.onnx" --scale 2 --num-block 23 --size 84
+if (( INCLUDE_X2PLUS )); then
+    export_onnx realesrgan-x2plus.onnx \
+        --arch rrdb --input "$x2pth" \
+        --output "$ONNX_DIR/realesrgan-x2plus.onnx" --scale 2 --num-block 23 --size 84
+else
+    echo "Skipped realesrgan-x2plus (--skip-x2plus)"
+fi
 # x4plus: same 23-block RRDB body as x2plus but scale=4, so the body runs at the
 # full tile resolution (no pixel_unshuffle) -> ~4x the body activations of x2plus.
 export_onnx realesrgan-x4plus.onnx \
@@ -184,6 +202,20 @@ cat > "$ONNX_DIR/manifest.json" <<'JSON'
   ]
 }
 JSON
+if (( ! INCLUDE_X2PLUS )); then
+    "$PYTHON" - "$ONNX_DIR/manifest.json" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+with open(path, encoding="utf-8") as f:
+    data = json.load(f)
+data["models"] = [m for m in data["models"] if m["name"] != "realesrgan-x2plus"]
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(data, f, indent=2)
+    f.write("\n")
+PY
+fi
 echo "Wrote web/models-onnx/manifest.json"
 
 # Vendor all ORT files needed by offline/COOP pages.
