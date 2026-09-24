@@ -264,4 +264,18 @@ void cancel_process()
     g_cancel.store(true);
 }
 
+// Tile-parallelism control for the CPU backend. num_threads <= 0 restores
+// auto-detection (one tile per logical core, memory-capped). Returns the count
+// the next run will use, so the page can show what it actually got.
+int set_cpu_threads(int num_threads)
+{
+    set_tile_thread_count(num_threads);
+    return tile_thread_count();
+}
+
+int get_cpu_threads()
+{
+    return tile_thread_count();
+}
+
 }

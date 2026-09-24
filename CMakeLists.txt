@@ -24,7 +24,7 @@ if (NOT LOCAL_DEBUG)
     # the page, so the build must export the FS runtime API and must NOT preload a
     # combined .data package (that would make every visitor fetch all four models).
     # _cancel_process lets the page's Stop button end a running CPU tile loop.
-    set(EXPORT_FLAGS "-s EXPORTED_FUNCTIONS=['_process_image','_cancel_process','_list_models','_get_model_count','_get_model_name','_get_model_scale','_get_model_input_blob','_get_model_output_blob','_malloc','_free'] -s EXPORTED_RUNTIME_METHODS=['ccall','cwrap','HEAPU8','UTF8ToString','FS']")
+    set(EXPORT_FLAGS "-s EXPORTED_FUNCTIONS=['_process_image','_cancel_process','_list_models','_get_model_count','_get_model_name','_get_model_scale','_get_model_input_blob','_get_model_output_blob','_set_cpu_threads','_get_cpu_threads','_malloc','_free'] -s EXPORTED_RUNTIME_METHODS=['ccall','cwrap','HEAPU8','UTF8ToString','FS']")
 
     # These are link-time-only settings. Passing -s through CMAKE_C_FLAGS /
     # CMAKE_CXX_FLAGS makes emcc emit "linker setting ignored during compilation"
