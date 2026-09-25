@@ -60,8 +60,10 @@ const showFileStart = html.indexOf("function esc(s){");
 const showFileEnd = html.indexOf("$('#file').onchange", showFileStart);
 if (showFileStart < 0 || showFileEnd < 0) throw new Error("could not locate showFile() for image-size regression checks");
 const showFileSource = html.slice(showFileStart, showFileEnd);
-// The picker's file-info helpers are used by render() too.
-const metaSource = html.match(/function esc\(s\)\{[\s\S]*?\}function showFile/)[0].replace(/function showFile$/, "");
+// The picker's file-info helpers are used by render() too. The picker also
+// carries the GIF frame helper, so anchor on the line break rather than on the
+// closing brace of the previous function.
+const metaSource = html.match(/function esc\(s\)\{[\s\S]*?\nfunction showFile/)[0].replace(/\nfunction showFile$/, "");
 
 // The run button is the Stop button while upscaling, so showFile() updates it
 // through updateRunButton(); the harness therefore has to run that helper and
@@ -507,6 +509,87 @@ if (!sliderMapping.includes("$('#divider').style.left=e.target.value+'%'") ||
 }
 if (visualRegressionFailures.length) {
   throw new Error(visualRegressionFailures.join("; "));
+}
+
+// --- AVIF and GIF input support -------------------------------------------
+// The picker must offer both new formats, and every locale must name them in the
+// picker hint and in the FAQ answer about sizes and formats.
+if (!html.includes('accept="image/png,image/jpeg,image/webp,image/bmp,image/avif,image/gif"')) {
+  throw new Error("the file picker must accept AVIF and GIF alongside the existing formats");
+}
+for (const locale of locales) {
+  for (const key of ["recommend", "faqA4"]) {
+    const text = root.T[locale]?.[key] || "";
+    if (!/AVIF/.test(text) || !/GIF/.test(text)) {
+      throw new Error(`${locale}.${key} must name AVIF and GIF, got ${JSON.stringify(text.slice(0, 60))}`);
+    }
+  }
+  // An animated GIF can only be upscaled from its first frame, and an
+  // undecodable file (an old browser without AVIF support, say) needs its own
+  // message instead of the generic processing failure.
+  if (!root.T[locale]?.gifFirstFrame) {
+    throw new Error(`missing gifFirstFrame copy for ${locale}`);
+  }
+  if (!root.T[locale]?.decodeFailed) {
+    throw new Error(`missing decodeFailed copy for ${locale}`);
+  }
+}
+
+// Frame counting must walk the GIF block structure. Counting raw 0x2C bytes also
+// matches compressed image data, which would call a static GIF animated.
+const gifFrameCount = vm.runInNewContext(
+  "(" + html.match(/function gifFrameCount\(b\)\{[^\n]*\}/)[0] + ")",
+  {}
+);
+function gifBytes(frames, dataByte) {
+  const bytes = [0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1, 0, 1, 0, 0x00, 0, 0];
+  for (let i = 0; i < frames; i++) {
+    bytes.push(0x21, 0xf9, 0x04, 0, 0, 0, 0, 0x00); // graphic control extension
+    bytes.push(0x2c, 0, 0, 0, 0, 1, 0, 1, 0, 0x00, 0x02, 0x01, dataByte, 0x00);
+  }
+  bytes.push(0x3b);
+  return new Uint8Array(bytes);
+}
+if (gifFrameCount(gifBytes(1, 0x2c)) !== 1) {
+  throw new Error("a static GIF must count as one frame even when its image data contains 0x2C bytes");
+}
+if (gifFrameCount(gifBytes(3, 0x2c)) !== 3) {
+  throw new Error("an animated GIF must report all of its frames");
+}
+if (gifFrameCount(new Uint8Array([1, 2, 3])) !== 1) {
+  throw new Error("a buffer that is not a GIF must be treated as a single frame");
+}
+
+// Selecting an animated GIF must warn that only the first frame is upscaled;
+// selecting a static one must not.
+async function selectGif(bytes) {
+  const node = freshNodes();
+  const context = {
+    busy: false, cancelRequested: false, resultReady: false, resultUrl: null,
+    file: { name: "anim.gif", type: "image/gif", arrayBuffer: () => Promise.resolve(bytes) },
+    largeImage: false, imageReady: false, w: 1, h: 1, srcUrl: null, alphaCanvas: null,
+    tr: (key) => key,
+    status: (key, kind) => { context.statusMessage = { key, kind }; },
+    $: node,
+    URL: { createObjectURL: () => "blob:fixture", revokeObjectURL() {} },
+    Image: class { constructor() { this.width = 4; this.height = 4; } set src(_value) { this.onload(); } },
+    document: { createElement: () => ({ width: 0, height: 0, getContext: () => ({ drawImage() {} }) }) },
+  };
+  vm.createContext(context);
+  vm.runInContext(buttonSource, context);
+  vm.runInContext(resetResultSource, context);
+  vm.runInContext(showFileSource, context);
+  context.showFile(context.file);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  return context;
+}
+const animatedGif = await selectGif(gifBytes(2, 0x2c));
+if (animatedGif.statusMessage?.key !== "gifFirstFrame" || animatedGif.statusMessage.kind !== "warn") {
+  throw new Error(`an animated GIF must warn about the first frame, got ${JSON.stringify(animatedGif.statusMessage)}`);
+}
+const staticGif = await selectGif(gifBytes(1, 0x2c));
+if (staticGif.statusMessage?.key !== "imageReady") {
+  throw new Error(`a static GIF must not warn about animation, got ${JSON.stringify(staticGif.statusMessage)}`);
 }
 
 console.log("web UI checks passed");

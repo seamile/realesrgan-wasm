@@ -81,7 +81,7 @@ before replacing an existing `dist/` and tells you which preparation script to r
 
 ### Input and output
 
-PNG, JPEG, WebP and BMP inputs are accepted; results download as PNG. To limit runtime and memory use, keep the longest edge at or below 512px on CPU or 1024px on WebGPU — these are recommendations, not hard limits. Past roughly 4 million pixels the UI warns that processing may be slow or run out of memory.
+PNG, JPEG, WebP, BMP, AVIF and GIF inputs are accepted; results download as PNG, and an animated GIF is upscaled from its first frame only. To limit runtime and memory use, keep the longest edge at or below 512px on CPU or 1024px on WebGPU — these are recommendations, not hard limits. Past roughly 4 million pixels the UI warns that processing may be slow or run out of memory.
 
 ## Deploying to nginx
 

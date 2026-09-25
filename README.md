@@ -30,7 +30,7 @@ English: see [README_EN.md](README_EN.md)
   | 动漫图片 | `realesr-animevideov3-x4` | `realesrgan-x4plus-anime` |
 
   CPU 与 WebGPU 使用同名模型；新增模型需要改代码，见「添加自己的模型」。
-- 输入 PNG / JPEG / WebP / BMP，结果下载为 PNG
+- 输入 PNG / JPEG / WebP / BMP / AVIF / GIF，结果下载为 PNG（动图 GIF 只放大第一帧）
 - 分块（tile）推理 + 进度条
 - WebGPU / CPU 后端切换；状态栏显示当前 WebGPU 适配器
 - 11 种界面语言（构建时预渲染成静态入口）
@@ -222,7 +222,7 @@ go run ./local_server.go   # 只服务 ./dist，监听 0.0.0.0:8000，并设置 
 
 浏览器打开：**http://localhost:8000**。不要用 `file://` 或不设置这些响应头的普通静态服务器，否则 CPU pthread 后端不可用。若改用 nginx 直接托管 `dist/`，则不需要 Go（见下文「部署到 nginx」）。
 
-支持的输入格式为 PNG / JPEG / WebP / BMP，结果一律下载为 PNG。建议：
+支持的输入格式为 PNG / JPEG / WebP / BMP / AVIF / GIF，结果一律下载为 PNG；动图 GIF 只放大第一帧。建议：
 
 1. 等状态栏显示 WebGPU 或 CPU 就绪
 2. 选一张**小图**：CPU 建议最长边 ≤ 512px，WebGPU 可到 1024px
@@ -362,7 +362,7 @@ map={photo:{speed:'…',quality:'…'},anime:{speed:'…',quality:'…'}}
 | 问题 | 处理 |
 |------|------|
 | 图片会不会被上传 | 不会。像素处理全部在浏览器内存中用本机 CPU/GPU 完成，本应用不上传或存储图片与结果；只有你点击下载时结果才会保存。页面仍会联网下载程序代码、运行时和所选模型 |
-| 支持哪些格式？图片可以多大 | 输入 PNG / JPEG / WebP / BMP，结果下载为 PNG；建议最长边 CPU ≤ 512px、WebGPU ≤ 1024px（建议而非硬性限制，超大图会很慢甚至耗尽内存） |
+| 支持哪些格式？图片可以多大 | 输入 PNG / JPEG / WebP / BMP / AVIF / GIF，结果下载为 PNG（动图 GIF 只放大第一帧）；建议最长边 CPU ≤ 512px、WebGPU ≤ 1024px（建议而非硬性限制，超大图会很慢甚至耗尽内存） |
 | 可以商用吗 | 本仓库代码为 BSD 3-Clause，允许商用；第三方组件与模型遵循各自许可证，见 [NOTICE](NOTICE) |
 | pthread / SharedArrayBuffer 失败 | 必须用带 COOP/COEP 的服务（`local_server.go` 或 nginx）；不要用 `file://` |
 | 切换「强制 CPU」后一直停在「正在加载 CPU 引擎…」，控制台报 worker 被屏蔽 | 该资源响应缺少 COEP（常见于 CDN 边缘仍缓存着旧构建，或 nginx 的 `location` 里写了 `add_header` 覆盖掉三个隔离头）。前端已用内容哈希目录规避旧缓存；确认 `crossOriginIsolated === true`，必要时 Purge CDN 缓存 |
