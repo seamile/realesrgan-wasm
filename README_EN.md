@@ -1,34 +1,39 @@
-# Real-ESRGAN ncnn WebAssembly
+# Scaler
 
-Run [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) locally in the browser (no image upload).
+Upscale photos and anime images 4× in the browser: [scaler.itools.top](https://scaler.itools.top/). Images are processed on your own machine and are never uploaded or stored.
+
+The algorithm and models come from [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN); the source repository is [seamile/realesrgan-wasm](https://github.com/seamile/realesrgan-wasm).
 
 | Route | Backend | Notes |
 |-------|---------|--------|
-| **A** | ncnn + WASM (SIMD + threads) | Broad compatibility, fallback |
-| **B** | ONNX Runtime WebGPU | Faster on discrete GPUs; falls back to A |
+| **A** | ncnn compiled to Emscripten WebAssembly (SIMD + pthreads) | Broad compatibility, fallback |
+| **B** | onnxruntime-web WebGPU execution provider | GPU acceleration |
 
-Runtime preference: **WebGPU, falling back to CPU WASM**. Upstream ncnn browser WebGPU is not ready yet, so Route B uses [onnxruntime-web](https://onnxruntime.ai/docs/tutorials/web/ep-webgpu.html).
+Automatic mode tries WebGPU first and falls back to CPU when WebGPU is unavailable, fails to initialize, or fails to process; the forced modes never fall back.
+
+Privacy: pixels are processed in browser memory on your own CPU/GPU. The app uploads and stores nothing — a result is written to disk only when you download it. The page still fetches its code, runtimes and the selected model over the network.
 
 中文文档：[README.md](README.md)
 
 ## Quick start
 
 ```bash
-git clone --recursive https://github.com/panmeibing/real-esrgan-ncnn-webassembly.git
-cd real-esrgan-ncnn-webassembly
+git clone --recursive https://github.com/seamile/realesrgan-wasm.git
+cd realesrgan-wasm
 
 # 1) Install the Emscripten SDK once; build.sh loads its environment automatically
 (cd emsdk && ./emsdk install 3.1.28 && ./emsdk activate 3.1.28)
 
-# 2) Prepare the four production models shared by CPU and WebGPU
-#    (Python 3 + PyTorch + onnx + Node.js; required for the first release build)
+# 2) Prepare the four production CPU models, the ONNX models and web/ort/
+#    (Python 3 + PyTorch + onnx + Node.js; required for the first release build.
+#    This also runs download_models.sh, so CPU-only setups need nothing else.)
 ./scripts/prepare_models.sh
 
 # 3) Build Route A and assemble dist/
 ./build.sh
 
-# 5) Serve dist/ with COOP/COEP (required for WASM threads)
-go run local_server.go
+# 4) Serve dist/ with COOP/COEP (required for WASM threads)
+go run ./local_server.go
 # open http://localhost:8000
 ```
 
@@ -38,8 +43,8 @@ go run local_server.go
 dist/
 ├── index.html                 # root entry (English static copy, runtime language match)
 ├── <locale>/index.html        # en zh-Hans zh-Hant fr de es pt ar ru ja ko: prerendered localized entries
-├── LICENSE / NOTICE
-├── statics/v<content-hash>/   # wasmFeatureDetect.js, webgpu/, ort/, and real-esrgan-ncnn-webassembly-simd-threads.js / .wasm / .worker.js
+├── LICENSE / NOTICE / robots.txt / sitemap.xml
+├── statics/v<content-hash>/   # wasmFeatureDetect.js, webgpu/, ort/, img/, and real-esrgan-ncnn-webassembly-simd-threads.js / .wasm / .worker.js
 └── models/v<content-hash>/    # manifest.json, *.onnx, CPU *.param/*.bin (downloaded on demand)
 ```
 
@@ -53,7 +58,7 @@ references those versioned paths: **change the assets and the URLs change**. No 
 no CDN (Cloudflare, etc.) can answer a request for a new build with a response cached for an older
 one. This matters for the CPU backend: static assets are normally cached for 30 days, and an old
 response without a `Cross-Origin-Embedder-Policy` header makes Chrome block the pthread worker, so
-the page hangs on "正在加载 CPU WASM 与模型资源…". Unchanged assets keep their hash and stay cached.
+the page hangs on "Loading CPU engine…". Unchanged assets keep their hash and stay cached.
 
 `dist/` can be moved and deployed on its own. If ORT or ONNX inputs are missing, the build fails
 before replacing an existing `dist/` and tells you which preparation script to run.
@@ -73,6 +78,10 @@ before replacing an existing `dist/` and tells you which preparation script to r
   `apt install protobuf-compiler libprotobuf-dev`) only for `build_ncnn_tools.sh`, which builds
   `onnx2ncnn` — needed for a CPU `realesrgan-x2plus`.
 - Desktop Chrome/Edge/Firefox; **no iOS**.
+
+### Input and output
+
+PNG, JPEG, WebP and BMP inputs are accepted; results download as PNG. To limit runtime and memory use, keep the longest edge at or below 512px on CPU or 1024px on WebGPU — these are recommendations, not hard limits. Past roughly 4 million pixels the UI warns that processing may be slow or run out of memory.
 
 ## Deploying to nginx
 
@@ -138,16 +147,42 @@ than serving it from a home directory), then run `nginx -t && systemctl reload n
   now pins `mainScriptUrlOrBlob` as a fallback, but off is safer).
 - Check `crossOriginIsolated` in the console after loading the page; it must be `true`.
 
-### Adding models
+### Model choices
 
-- **CPU:** put `.param`+`.bin` in `models/`, then re-run `./build.sh`.
-- **WebGPU:** put fixed-shape `.onnx` under `web/models-onnx/`, update `manifest.json`, then re-run `./build.sh`.
+The UI exposes exactly four 4× choices, matched from "image style × preference":
 
-`prepare_models.sh` prepares the four production models shared by CPU and WebGPU (`realesr-general-x4v3`, `realesr-animevideov3-x4`, `realesrgan-x4plus` ~67MB, `realesrgan-x4plus-anime` ~18MB). `build.sh` copies the manifest's ONNX files and the CPU `.param`/`.bin` files into `dist/models/`; the page downloads only the selected model at runtime. To add an optional x2plus model, use `./scripts/build_ncnn_tools.sh` + `./scripts/convert_x2plus.sh` for CPU and regenerate the WebGPU manifest for the ONNX side (keep both lists in sync).
+| Style | Speed first | Quality first |
+|-------|-------------|---------------|
+| Real photo | `realesr-general-x4v3` | `realesrgan-x4plus` |
+| Anime | `realesr-animevideov3-x4` | `realesrgan-x4plus-anime` |
+
+CPU and WebGPU use the same model names.
+
+`prepare_models.sh` prepares those four models for both backends (`realesrgan-x4plus` ~67MB, `realesrgan-x4plus-anime` ~18MB). `build.sh` copies the manifest's ONNX files and the CPU `.param`/`.bin` files into `dist/models/`; the page downloads only the selected model at runtime.
 `realesrgan-x4plus` skips `pixel_unshuffle`, so its RRDB body runs at full tile resolution — about
 4x the body activations of x2plus at the same `tilesize`.
 
+### Adding a model (a developer change)
+
+Adding a model means changing code, not just dropping files into a directory:
+
+- **CPU:** put the `.param`+`.bin` pair in `models/`, then add its name to **both** CPU model loops in `build.sh` (the copy loop and the validation loop).
+- **WebGPU:** add a fixed-shape `.onnx` under `web/models-onnx/`, update `manifest.json`, then re-run `./build.sh`.
+- **Frontend:** wire the new name into the model map in `web/index.html` (`map={photo:{speed:…,quality:…},anime:{speed:…,quality:…}}`), otherwise users cannot select it. A scale other than 4× also needs the output sizing and download logic updated.
+
+The `realesrgan-x2plus` conversion scripts (`build_ncnn_tools.sh`, `convert_x2plus.sh`) are kept for development only: the published UI and `build.sh` are fixed to the four 4× models above, so their output does not appear on the site without the changes described here.
+
 Weights and build artifacts are gitignored; see scripts under `scripts/`.
+
+## Acknowledgements
+
+This project builds on:
+
+- [xinntao/Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) — models and algorithm
+- [panmeibing/real-esrgan-ncnn-webassembly](https://github.com/panmeibing/real-esrgan-ncnn-webassembly) — the WebAssembly implementation this project is based on
+- [hanFengSan/realcugan-ncnn-webassembly](https://github.com/hanFengSan/realcugan-ncnn-webassembly) — Emscripten + ncnn browser engineering reference
+- [Tencent/ncnn](https://github.com/Tencent/ncnn) — CPU inference framework
+- [Microsoft ONNX Runtime](https://github.com/microsoft/onnxruntime) — WebGPU execution provider
 
 ## License
 

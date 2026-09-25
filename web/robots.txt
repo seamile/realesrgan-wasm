@@ -1,3 +1,3 @@
 User-agent: *
 Allow: /
-Sitemap: https://4x.pixcc.net/sitemap.xml
+Sitemap: https://scaler.itools.top/sitemap.xml

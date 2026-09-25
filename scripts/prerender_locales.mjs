@@ -19,7 +19,7 @@ if (!indexPath || !i18nPath || !outDir) {
   process.exit(2);
 }
 
-const SITE = "https://4x.pixcc.net";
+const SITE = "https://scaler.itools.top";
 const LOCALES = ["en", "zh-Hans", "zh-Hant", "fr", "de", "es", "pt", "ar", "ru", "ja", "ko"];
 const OG_LOCALE = {
   en: "en_US",
@@ -62,6 +62,9 @@ function stripTags(value) {
     .replace(/<br\s*\/?>/gi, " ")
     .replace(/<[^>]*>/g, "")
     .replace(/\s+/g, " ")
+    // A line break between two CJK characters must not leave a space behind:
+    // "细节更清晰，<br>图片不出门。" belongs in the tab title without the gap.
+    .replace(/([\u2e80-\u9fff\uff00-\uffef])\s+(?=[\u2e80-\u9fff\uff00-\uffef])/g, "$1")
     .trim();
 }
 function escapeHtml(value) {
@@ -96,11 +99,11 @@ function renderPage(locale, isRoot) {
   const title = stripTags(t(lang, "title"));
   const description = stripTags(t(lang, "intro"));
   const dir = lang === "ar" ? ' dir="rtl"' : "";
-  const headTitle = `${title || "PIXCC · 4×"} — PIXCC · 4×`;
+  const headTitle = `${title || "Scaler"} — Scaler`;
   const jsonld = JSON.stringify({
     "@context": "https://schema.org",
     "@type": "WebApplication",
-    name: "PIXCC · 4×",
+    name: "Scaler",
     url,
     applicationCategory: "MultimediaApplication",
     operatingSystem: "Web",
@@ -126,7 +129,7 @@ function renderPage(locale, isRoot) {
   );
   out = out.replace(
     /<meta property="og:title" content="[^"]*">/,
-    `<meta property="og:title" content="${escapeAttr(title || "PIXCC · 4×")}">`
+    `<meta property="og:title" content="${escapeAttr(title || "Scaler")}">`
   );
   out = out.replace(
     /<meta property="og:description" content="[^"]*">/,

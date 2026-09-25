@@ -44,7 +44,7 @@ function loadPage(locationHref) {
 }
 
 const locales = ["en", "zh-Hans", "zh-Hant", "fr", "de", "es", "pt", "ar", "ru", "ja", "ko"];
-const root = loadPage("https://4x.pixcc.net/");
+const root = loadPage("https://scaler.itools.top/");
 const reference = Object.keys(root.T.en).sort();
 for (const locale of locales) {
   const table = root.T[locale];
@@ -242,7 +242,7 @@ if (runtimeStatusTable(html) !== runtimeStatusTable(extraTranslations)) {
 // render() - which a style or preference click triggers.
 const baseT = vm.runInNewContext("(" + baseMatch[1] + ")", {});
 const baseKeys = Object.keys(baseT.en).sort();
-const pageRoot = loadPage("https://4x.pixcc.net/");
+const pageRoot = loadPage("https://scaler.itools.top/");
 for (const locale of locales) {
   const lost = baseKeys.filter((key) => pageRoot.T[locale][key] === undefined);
   if (lost.length) {
@@ -306,7 +306,7 @@ if (!englishWarning.includes("large") || warningStatusNode.textContent === engli
 }
 
 // A direct locale route must retain its language instead of falling back to root.
-const fr = loadPage("https://4x.pixcc.net/fr/");
+const fr = loadPage("https://scaler.itools.top/fr/");
 if (fr.lang !== "fr") throw new Error(`Direct locale route /fr/ resolved to ${fr.lang}`);
 
 if ((html.match(/seamile\/realesrgan-wasm/g) || []).length !== 2) {

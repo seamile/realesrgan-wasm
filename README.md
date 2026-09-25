@@ -1,13 +1,17 @@
-# Real-ESRGAN ncnn WebAssembly
+# Scaler
 
-在浏览器本地运行 [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) 超分辨率（照片 / 动漫增强），**不上传图片**。
+在浏览器中把照片和动漫图片放大 4 倍：[scaler.itools.top](https://scaler.itools.top/)。图片在本机处理，不上传也不存储。
+
+底层算法与模型来自 [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN)，源码仓库为 [seamile/realesrgan-wasm](https://github.com/seamile/realesrgan-wasm)。
 
 | 路线 | 后端 | 说明 |
 |------|------|------|
-| **A** | ncnn + WebAssembly（SIMD + 多线程） | 兼容面广，默认兜底 |
-| **B** | ONNX Runtime WebGPU | GPU 加速；不可用时自动回退 A |
+| **A** | ncnn 编译为 Emscripten WebAssembly（SIMD + pthread） | 兼容面广，兜底 |
+| **B** | onnxruntime-web 的 WebGPU 执行提供程序 | GPU 加速 |
 
-运行时：**优先 WebGPU，失败则回退 CPU WASM**。页面也可手动切换后端。
+自动模式先尝试 WebGPU，在 WebGPU 不可用、初始化失败或处理失败时回退到 CPU；手动「强制 WebGPU / 强制 CPU」不会自动回退。
+
+隐私：像素处理全部在浏览器内存中用本机 CPU/GPU 完成，本应用不上传或存储图片与结果，只有你点击下载时才会保存文件。页面仍会联网下载程序代码、运行时和所选模型。
 
 > 说明：上游 ncnn 的浏览器 WebGPU 尚不成熟，因此路线 B 使用 [onnxruntime-web](https://onnxruntime.ai/docs/tutorials/web/ep-webgpu.html) WebGPU EP，与路线 A 共用同一套 UI。
 
@@ -17,10 +21,19 @@ English: see [README_EN.md](README_EN.md)
 
 ## 功能
 
-- 浏览器本地推理（需较新的桌面 Chrome / Edge / Firefox）
-- **自动扫描** `models/`：放入成对的 `.param` + `.bin`，重新编译后即可选择
+- 浏览器本地推理（需较新的桌面 Chrome / Edge / Firefox；**不支持 iOS**）
+- 界面固定提供四个 4× 模型，按「图片风格 × 处理偏好」自动匹配：
+
+  | 图片风格 | 速度优先 | 质量优先 |
+  |----------|----------|----------|
+  | 真实照片 | `realesr-general-x4v3` | `realesrgan-x4plus` |
+  | 动漫图片 | `realesr-animevideov3-x4` | `realesrgan-x4plus-anime` |
+
+  CPU 与 WebGPU 使用同名模型；新增模型需要改代码，见「添加自己的模型」。
+- 输入 PNG / JPEG / WebP / BMP，结果下载为 PNG
 - 分块（tile）推理 + 进度条
 - WebGPU / CPU 后端切换；状态栏显示当前 WebGPU 适配器
+- 11 种界面语言（构建时预渲染成静态入口）
 
 ## 仓库结构（精简）
 
@@ -31,9 +44,12 @@ English: see [README_EN.md](README_EN.md)
 ├── ncnn/ / emsdk/                            # Git 子模块
 ├── models/                                   # CPU ncnn 模型源（权重不进 Git，构建时发布到 dist/）
 ├── web/                                      # 网页源码与 WebGPU 生成资源（发布输入，不直接部署）
-│   ├── index.html                            # 前端
+│   ├── index.html                            # 前端（内联多语言表）
+│   ├── i18n.js                               # 其余 9 种语言文案，构建时内联进 index.html
 │   ├── wasmFeatureDetect.js
 │   ├── webgpu/realesrgan-webgpu.js           # 路线 B 引擎
+│   ├── img/sample-*.webp                     # 首页效果展示图
+│   ├── robots.txt / sitemap.xml
 │   ├── models-onnx/                          # WebGPU ONNX（.onnx 不进 Git）
 │   └── ort/                                  # onnxruntime-web 静态资源（不进 Git）
 ├── dist/                                     # 构建产物：自包含站点（不进 Git，可直接部署）
@@ -41,8 +57,11 @@ English: see [README_EN.md](README_EN.md)
 │   ├── statics/                              # 脚本、WASM、pthread worker、ORT
 │   └── models/                               # manifest.json、ONNX、CPU *.param/*.bin（按需下载）
 └── scripts/
-    ├── download_models.sh                    # 下载 CPU ncnn 模型（默认含 x4plus / x4plus-anime）
+    ├── prepare_models.sh                     # 一次备齐四个生产模型与 ORT（= download_models.sh + prepare_webgpu_models.sh --skip-x2plus）
+    ├── download_models.sh                    # 下载四个 CPU ncnn 模型（--include-wdn 额外下载 wdn 变体）
     ├── prepare_webgpu_models.sh              # 导出 ONNX + 安装 ORT（--skip-x2plus 与 CPU 侧对齐）
+    ├── check_web_ui.mjs                      # 校验多语言文案与页面结构（构建前自检）
+    ├── prerender_locales.mjs                 # 生成各语言的预渲染入口
     ├── build_ncnn_tools.sh                   # 本机编译 onnx2ncnn / ncnnoptimize（仅转换 x2plus 时需要）
     ├── convert_x2plus.sh                     # 转换 x2plus -> ncnn
     └── pytorch2onnx_*.py
@@ -119,8 +138,8 @@ cd ..
 ### 1. 克隆并拉取子模块
 
 ```bash
-git clone --recursive https://github.com/panmeibing/real-esrgan-ncnn-webassembly.git
-cd real-esrgan-ncnn-webassembly
+git clone --recursive https://github.com/seamile/realesrgan-wasm.git
+cd realesrgan-wasm
 ```
 
 若已克隆但未拉子模块：
@@ -134,6 +153,8 @@ git submodule update --init --recursive
 ```bash
 ./scripts/download_models.sh
 ```
+
+> 如果接下来会执行步骤 3，这一步可以跳过：`prepare_models.sh` 内部已经调用了 `download_models.sh`。单独执行本步骤只适合「只用 CPU 路线」的场景。
 
 默认下载四个生产 CPU 模型（约 47MB），与 WebGPU 清单（`web/models-onnx/manifest.json`）保持一致：
 
@@ -149,7 +170,7 @@ git submodule update --init --recursive
 > CPU 模型不再打进 `.data`：页面在点击放大后才下载当前选中的 `.param` + `.bin`，并写入 Emscripten 内存文件系统。生产环境只需发布本目录中的四个生产模型。
 > `realesrgan-x2plus` 没有官方 ncnn 包，需要自行转换（见下文「可选：转换 realesrgan-x2plus」），**不要**直接用第三方 HF 粗转包（可能含 `Shape` 层）。
 
-### 3. 准备路线 B（WebGPU 发布资源）
+### 3. 准备模型与 WebGPU 资源
 
 首次构建 `dist/` 前，需要 Python + PyTorch + onnx + Node.js 生成 CPU 与 WebGPU 资源（依赖说明见「环境要求」）：
 
@@ -180,14 +201,14 @@ git submodule update --init --recursive
 dist/
 ├── index.html             # 根入口（静态正文为英语，运行时按浏览器语言切换）
 ├── <locale>/index.html    # en zh-Hans zh-Hant fr de es pt ar ru ja ko：预渲染的本地化入口
-├── LICENSE / NOTICE
-├── statics/v<内容哈希>/   # wasmFeatureDetect.js、webgpu/、ort/，以及 real-esrgan-ncnn-webassembly-simd-threads.js / .wasm / .worker.js
+├── LICENSE / NOTICE / robots.txt / sitemap.xml
+├── statics/v<内容哈希>/   # wasmFeatureDetect.js、webgpu/、ort/、img/（首页效果图），以及 real-esrgan-ncnn-webassembly-simd-threads.js / .wasm / .worker.js
 └── models/v<内容哈希>/    # manifest.json、*.onnx、CPU *.param/*.bin（按需下载）
 ```
 
 每个语言入口都由 `scripts/prerender_locales.mjs` 在构建时烘焙好 `<html lang>`、`<title>`、描述、canonical/hreflang、Open Graph、JSON-LD 与静态正文；正文另有一份内联的多语言表，供运行时切换语言使用（页面不再单独请求 `i18n.js`）。
 
-`statics/` 与 `models/` 下各有一个按内容哈希命名的子目录（`v…`），`index.html` 只引用这些带版本号的路径：**资源内容一变，URL 就变**，因此浏览器缓存和 CDN（Cloudflare 等）都不可能拿上一次构建的响应来回答新构建。这一点对 CPU 后端是硬要求——静态资源通常被缓存 30 天，而缺少 `Cross-Origin-Embedder-Policy` 的旧响应会让 Chrome 拦截 pthread worker，页面就会卡在「正在加载 CPU WASM 与模型资源…」。内容没变时哈希不变，缓存依旧有效。
+`statics/` 与 `models/` 下各有一个按内容哈希命名的子目录（`v…`），`index.html` 只引用这些带版本号的路径：**资源内容一变，URL 就变**，因此浏览器缓存和 CDN（Cloudflare 等）都不可能拿上一次构建的响应来回答新构建。这一点对 CPU 后端是硬要求——静态资源通常被缓存 30 天，而缺少 `Cross-Origin-Embedder-Policy` 的旧响应会让 Chrome 拦截 pthread worker，页面就会卡在「正在加载 CPU 引擎…」。内容没变时哈希不变，缓存依旧有效。
 
 `dist/` 可以脱离源码独立移动和部署。若缺少 ORT 或 ONNX 资源，脚本会在覆盖旧 `dist/` 之前直接报错并提示先运行准备脚本。
 
@@ -196,16 +217,18 @@ dist/
 **必须**使用带 COOP/COEP 响应头的服务器，否则 WASM 多线程无法启用：
 
 ```bash
-go run local_server.go   # 服务 ./dist，监听 0.0.0.0:8000
+go run ./local_server.go   # 只服务 ./dist，监听 0.0.0.0:8000，并设置 COOP/COEP/CORP
 ```
 
-浏览器打开：**http://localhost:8000**。若改用 nginx 直接托管 `dist/`，则不需要 Go（见下文「部署到 nginx」）。
+浏览器打开：**http://localhost:8000**。不要用 `file://` 或不设置这些响应头的普通静态服务器，否则 CPU pthread 后端不可用。若改用 nginx 直接托管 `dist/`，则不需要 Go（见下文「部署到 nginx」）。
 
-建议：
+支持的输入格式为 PNG / JPEG / WebP / BMP，结果一律下载为 PNG。建议：
 
 1. 等状态栏显示 WebGPU 或 CPU 就绪
-2. 选一张**小图**（CPU 建议最长边 ≤ 512；WebGPU 可到约 1024）
-3. 点「开始超分」，观察进度与结果
+2. 选一张**小图**：CPU 建议最长边 ≤ 512px，WebGPU 可到 1024px
+3. 点「放大到 4 倍」，观察进度与结果
+
+尺寸只是建议而非硬性限制：超过约 400 万像素时页面会提示图片较大，处理可能很慢，甚至耗尽内存。
 
 ---
 
@@ -274,7 +297,9 @@ server {
 
 ## 可选：转换 `realesrgan-x2plus`（CPU ncnn）
 
-`realesrgan-x2plus`（x2）官方只发布了 `.pth`，没有 ncnn 包，需要在本机转换一次；想让它两个后端都可用，CPU 侧按本节转换，GPU 侧准备资源时去掉 `--skip-x2plus` 并同步 `web/models-onnx/manifest.json`（`build.sh` 会校验两侧清单一致）。
+> **当前发布版只支持上面四个 4× 模型。** 本节脚本保留作开发用途：转换出的 `realesrgan-x2plus` **不会**自动出现在站点里——`build.sh` 只复制并校验那四个模型，前端模型映射也只认四个 4× 模型。要真正启用它，需要同时修改 `web/index.html` 的模型映射与输出倍率、`build.sh` 的复制/校验列表。
+
+`realesrgan-x2plus`（x2）官方只发布了 `.pth`，没有 ncnn 包，需要在本机转换一次；想让它两个后端都可用，CPU 侧按本节转换，GPU 侧准备资源时去掉 `--skip-x2plus` 并同步 `web/models-onnx/manifest.json`。
 
 ```bash
 # 1) 准备主机端工具（只需一次；需要 cmake / protoc / C++ 工具链）
@@ -303,14 +328,14 @@ server {
 
 ## 添加自己的模型
 
+界面上的模型是固定的四个 4× 选择，新增模型需要同时改代码，**不能只把文件放进目录**。
+
 ### CPU（路线 A）
 
 1. 准备成对的 `name.param` + `name.bin`（ncnn 格式，建议输入/输出为 `data`/`output`）
 2. 放入 `models/`（文件名带 `x2`/`x3`/`x4`/`x2plus` 便于识别倍率）
-3. 重新运行 `./build.sh`
-4. 刷新页面
-
-详见 [`models/README.md`](models/README.md)。
+3. 在 `build.sh` 的 CPU 模型列表（**复制与校验两处**）中加入 `name`
+4. 重新运行 `./build.sh`，刷新页面
 
 ### WebGPU（路线 B）
 
@@ -318,21 +343,36 @@ server {
 2. 放入 `web/models-onnx/`，更新 `manifest.json`
 3. 重新运行 `./build.sh`（把 ONNX 打包进 `dist/models/`），刷新页面
 
+### 前端映射
+
+在 `web/index.html` 的模型映射中把新模型接上去，否则用户选不到它：
+
+```js
+map={photo:{speed:'…',quality:'…'},anime:{speed:'…',quality:'…'}}
+```
+
+倍率不是 4× 时，还要同步输出尺寸与下载逻辑（当前结果画布按 4× 分配）。
+
+详见 [`models/README.md`](models/README.md)。
+
 ---
 
 ## 常见问题
 
 | 问题 | 处理 |
 |------|------|
+| 图片会不会被上传 | 不会。像素处理全部在浏览器内存中用本机 CPU/GPU 完成，本应用不上传或存储图片与结果；只有你点击下载时结果才会保存。页面仍会联网下载程序代码、运行时和所选模型 |
+| 支持哪些格式？图片可以多大 | 输入 PNG / JPEG / WebP / BMP，结果下载为 PNG；建议最长边 CPU ≤ 512px、WebGPU ≤ 1024px（建议而非硬性限制，超大图会很慢甚至耗尽内存） |
+| 可以商用吗 | 本仓库代码为 BSD 3-Clause，允许商用；第三方组件与模型遵循各自许可证，见 [NOTICE](NOTICE) |
 | pthread / SharedArrayBuffer 失败 | 必须用带 COOP/COEP 的服务（`local_server.go` 或 nginx）；不要用 `file://` |
-| 切换「强制 CPU」后一直停在「正在加载 CPU WASM 与模型资源…」，控制台报 worker 被屏蔽 | 该资源响应缺少 COEP（常见于 CDN 边缘仍缓存着旧构建，或 nginx 的 `location` 里写了 `add_header` 覆盖掉三个隔离头）。前端已用内容哈希目录规避旧缓存；确认 `crossOriginIsolated === true`，必要时 Purge CDN 缓存 |
+| 切换「强制 CPU」后一直停在「正在加载 CPU 引擎…」，控制台报 worker 被屏蔽 | 该资源响应缺少 COEP（常见于 CDN 边缘仍缓存着旧构建，或 nginx 的 `location` 里写了 `add_header` 覆盖掉三个隔离头）。前端已用内容哈希目录规避旧缓存；确认 `crossOriginIsolated === true`，必要时 Purge CDN 缓存 |
 | `Emscripten is not installed` | 在 `emsdk/` 中执行 `./emsdk install 3.1.28 && ./emsdk activate 3.1.28` |
-| WebGPU 提示找不到 `dist/statics/ort/ort.webgpu.min.js` | 运行 `./scripts/prepare_webgpu_models.sh`，再重新 `./build.sh` |
+| WebGPU 提示找不到 `dist/statics/v<内容哈希>/ort/ort.webgpu.min.js` | 运行 `./scripts/prepare_webgpu_models.sh`，再重新 `./build.sh` |
 | 子模块为空 | `git submodule update --init --recursive` |
 | `Unable to find onnx2ncnn` / `ncnnoptimize` | 先运行 `./scripts/build_ncnn_tools.sh`（需要 `protoc` 与 C++ 工具链），产物会自动落到 `_convert/ncnn-build/tools/` |
 | CPU 与 WebGPU 的模型列表不一致 | 运行 `./scripts/prepare_models.sh` 把两侧清单统一收敛到四个生产模型；可选模型按需同时补到 CPU 与 ONNX 侧 |
 | WebGPU 报 Shape mismatch / buffer reuse | 使用本仓库脚本导出的**固定尺寸** ONNX，不要用错误共用 `height`/`width` 符号维的动态模型 |
-| ORT 找不到 `.mjs` | 重新运行 `./scripts/prepare_webgpu_models.sh`，确保 `web/ort/` 含全部 `ort-wasm-simd-threaded.*`，再重新 `./build.sh` |
+| 构建报缺少 ORT 资源 | `build.sh` 要求 `web/ort/` 中存在 `ort.webgpu.min.js`、`ort-wasm-simd-threaded.asyncify.mjs`、`ort-wasm-simd-threaded.asyncify.wasm`；缺哪个就重新运行 `./scripts/prepare_webgpu_models.sh` |
 | 首次加载很慢 / 内存爆 | CPU 只下载当前选中的 `.param` + `.bin`；WebGPU 在首次使用某个模型时下载对应 `.onnx`。若发布目录混入非生产模型，可在构建前清理 `models/` 与 `web/models-onnx/` |
 | 中国大陆拉 GitHub 失败 | 配置代理 / VPN 后再拉子模块与模型 |
 
@@ -340,10 +380,13 @@ server {
 
 ## 致谢
 
-- [xinntao/Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN)
-- [Tencent/ncnn](https://github.com/Tencent/ncnn)
-- [hanFengSan/realcugan-ncnn-webassembly](https://github.com/hanFengSan/realcugan-ncnn-webassembly)
-- [Microsoft ONNX Runtime](https://github.com/microsoft/onnxruntime)
+本项目站在这些开源工作之上：
+
+- [xinntao/Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) — 模型与算法
+- [panmeibing/real-esrgan-ncnn-webassembly](https://github.com/panmeibing/real-esrgan-ncnn-webassembly) — 本项目的 WebAssembly 实现基础
+- [hanFengSan/realcugan-ncnn-webassembly](https://github.com/hanFengSan/realcugan-ncnn-webassembly) — Emscripten + ncnn 浏览器工程参考
+- [Tencent/ncnn](https://github.com/Tencent/ncnn) — CPU 推理框架
+- [Microsoft ONNX Runtime](https://github.com/microsoft/onnxruntime) — WebGPU 执行提供程序
 
 ## License
 

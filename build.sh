@@ -48,6 +48,8 @@ require_file() {
 require_file "$WEB/index.html" "Repository is incomplete: web/index.html is missing."
 require_file "$WEB/wasmFeatureDetect.js" "Repository is incomplete: web/wasmFeatureDetect.js is missing."
 require_file "$WEB/webgpu/realesrgan-webgpu.js" "Repository is incomplete: web/webgpu/realesrgan-webgpu.js is missing."
+require_file "$WEB/img/sample-anime.webp" "Repository is incomplete: web/img/sample-anime.webp is missing."
+require_file "$WEB/img/sample-photo.webp" "Repository is incomplete: web/img/sample-photo.webp is missing."
 require_file "$ORT_DIR/ort.webgpu.min.js" "$PREPARE_HINT"
 require_file "$ORT_DIR/ort-wasm-simd-threaded.asyncify.mjs" "$PREPARE_HINT"
 require_file "$ORT_DIR/ort-wasm-simd-threaded.asyncify.wasm" "$PREPARE_HINT"
@@ -105,6 +107,11 @@ cp -f "$WEB/robots.txt" "$TMP_DIST/robots.txt"
 cp -f "$WEB/sitemap.xml" "$TMP_DIST/sitemap.xml"
 
 cp -f "$WEB/wasmFeatureDetect.js" "$TMP_DIST/statics/"
+# The showcase screenshots are published under statics/ so they pick up the same
+# content-versioned, root-relative URLs as every other asset -- that keeps them
+# cache-safe and reachable from the /<locale>/ routes.
+mkdir -p "$TMP_DIST/statics/img"
+cp -f "$WEB/img/sample-anime.webp" "$WEB/img/sample-photo.webp" "$TMP_DIST/statics/img/"
 cp -f "$WEB/webgpu/realesrgan-webgpu.js" "$TMP_DIST/statics/webgpu/"
 
 # ort.webgpu.min.js (1.27) is built with the asyncify wasm variant enabled;
@@ -132,7 +139,7 @@ for model in realesr-general-x4v3 realesr-animevideov3-x4 realesrgan-x4plus real
 done
 
 # --- Cache-busting version directories -------------------------------------
-# CDNs (Cloudflare in front of 4x.pixcc.net) and browsers cache statics/ and
+# CDNs (Cloudflare in front of scaler.itools.top) and browsers cache statics/ and
 # models/ for 30 days. Reusing the same URLs across deploys therefore keeps
 # serving the previous build -- including copies cached before the origin sent
 # COOP/COEP/CORP, which makes Chrome block the Emscripten pthread worker with
@@ -240,6 +247,8 @@ done
 for asset in \
   index.html \
   "statics/$STATIC_DIR/wasmFeatureDetect.js" \
+  "statics/$STATIC_DIR/img/sample-anime.webp" \
+  "statics/$STATIC_DIR/img/sample-photo.webp" \
   "statics/$STATIC_DIR/webgpu/realesrgan-webgpu.js" \
   "statics/$STATIC_DIR/ort/ort.webgpu.min.js" \
   "statics/$STATIC_DIR/ort/ort-wasm-simd-threaded.asyncify.wasm" \
