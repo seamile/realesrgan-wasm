@@ -372,6 +372,7 @@ map={photo:{speed:'…',quality:'…'},anime:{speed:'…',quality:'…'}}
 | `Unable to find onnx2ncnn` / `ncnnoptimize` | 先运行 `./scripts/build_ncnn_tools.sh`（需要 `protoc` 与 C++ 工具链），产物会自动落到 `_convert/ncnn-build/tools/` |
 | CPU 与 WebGPU 的模型列表不一致 | 运行 `./scripts/prepare_models.sh` 把两侧清单统一收敛到四个生产模型；可选模型按需同时补到 CPU 与 ONNX 侧 |
 | WebGPU 报 Shape mismatch / buffer reuse | 使用本仓库脚本导出的**固定尺寸** ONNX，不要用错误共用 `height`/`width` 符号维的动态模型 |
+| WebGPU 结果在分块边界出现横纹或竖纹 | 固定尺寸的分块窗口必须按**图像边缘**裁剪（`extractFixedTileNCHW`）：窗口内要读到相邻分块的真实像素，只有超出图像的部分才 replicate。若改用本块最后的行/列去补齐尾部 padding，每个分块的右/下边缘就会与后一个分块不一致而留下细缝；CPU 路径因走 ROI + replicate 边框而没有该问题 |
 | 构建报缺少 ORT 资源 | `build.sh` 要求 `web/ort/` 中存在 `ort.webgpu.min.js`、`ort-wasm-simd-threaded.asyncify.mjs`、`ort-wasm-simd-threaded.asyncify.wasm`；缺哪个就重新运行 `./scripts/prepare_webgpu_models.sh` |
 | 首次加载很慢 / 内存爆 | CPU 只下载当前选中的 `.param` + `.bin`；WebGPU 在首次使用某个模型时下载对应 `.onnx`。若发布目录混入非生产模型，可在构建前清理 `models/` 与 `web/models-onnx/` |
 | 中国大陆拉 GitHub 失败 | 配置代理 / VPN 后再拉子模块与模型 |

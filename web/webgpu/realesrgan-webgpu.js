@@ -16,36 +16,33 @@
   }
 
   /**
-   * Extract a fixed-size (inSize x inSize) tile centered on the content region
-   * [tileX, tileY, tileW, tileH] with PAD border, replicate at image edges.
-   * Extra space on the right/bottom (when tileW/H < TILE) is also filled by replicate.
+   * Extract the fixed-size (inSize x inSize) input window for the tile whose
+   * content region starts at (tileX, tileY). The content sits at (PAD, PAD)
+   * inside the window, so window pixel (PAD + i, PAD + j) maps to source pixel
+   * (tileX + i, tileY + j) clamped to the image.
+   *
+   * Clamping must happen against the IMAGE edges, not the tile edges: inside the
+   * image the window therefore sees the real neighbouring pixels that belong to
+   * the adjacent tiles, and only the part of the window that falls outside the
+   * image is replicated. That is exactly the ROI-plus-replicate-border semantics
+   * of the CPU/ncnn path (realesrgan.cpp process_tile), which is why both
+   * backends then agree along tile boundaries.
+   *
+   * Replicating the tile's own last row/column to fill the trailing pad instead
+   * feeds the network a fabricated right/bottom border that the neighbouring
+   * tile never sees, so every tile ends up inconsistent with the tile after it
+   * and a seam is left along its right and bottom edge.
    */
-  function extractFixedTileNCHW(rgba, w, h, tileX, tileY, tileW, tileH, PAD, inSize) {
-    const data = new Float32Array(1 * 3 * inSize * inSize);
-    // Content starts at (PAD, PAD) inside the fixed window.
+  function extractFixedTileNCHW(rgba, w, h, tileX, tileY, PAD, inSize) {
+    const data = new Float32Array(3 * inSize * inSize);
     for (let c = 0; c < 3; c++) {
       const plane = c * inSize * inSize;
       for (let y = 0; y < inSize; y++) {
-        // Map window y -> source y: content region is [PAD, PAD+tileH)
-        let sy;
-        if (y < PAD) {
-          sy = Math.min(Math.max(tileY - (PAD - y), 0), h - 1);
-        } else if (y < PAD + tileH) {
-          sy = Math.min(Math.max(tileY + (y - PAD), 0), h - 1);
-        } else {
-          // Past content: clamp to last content row (or image edge)
-          sy = Math.min(Math.max(tileY + tileH - 1, 0), h - 1);
-        }
+        const sy = Math.min(Math.max(tileY + (y - PAD), 0), h - 1);
+        const row = sy * w;
         for (let x = 0; x < inSize; x++) {
-          let sx;
-          if (x < PAD) {
-            sx = Math.min(Math.max(tileX - (PAD - x), 0), w - 1);
-          } else if (x < PAD + tileW) {
-            sx = Math.min(Math.max(tileX + (x - PAD), 0), w - 1);
-          } else {
-            sx = Math.min(Math.max(tileX + tileW - 1, 0), w - 1);
-          }
-          data[plane + y * inSize + x] = rgba[(sy * w + sx) * 4 + c] / 255;
+          const sx = Math.min(Math.max(tileX + (x - PAD), 0), w - 1);
+          data[plane + y * inSize + x] = rgba[(row + sx) * 4 + c] / 255;
         }
       }
     }
@@ -242,7 +239,7 @@
           const tileX = xi * TILE;
           const tileW = Math.min(TILE, w - tileX);
 
-          const data = extractFixedTileNCHW(rgba, w, h, tileX, tileY, tileW, tileH, PAD, inSize);
+          const data = extractFixedTileNCHW(rgba, w, h, tileX, tileY, PAD, inSize);
           const tensor = new global.ort.Tensor("float32", data, [1, 3, inSize, inSize]);
           const feeds = {};
           feeds[model.input] = tensor;
