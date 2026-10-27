@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" role="img" aria-labelledby="title description">
+  <title id="title">Logo</title>
+  <desc id="description">Four circles arranged in a square, with the lower-left circle in red and the other three in yellow.</desc>
+  <circle cx="200" cy="200" r="200" fill="#FFC000"/>
+  <circle cx="600" cy="200" r="200" fill="#FFC000"/>
+  <circle cx="200" cy="600" r="200" fill="#FF2000"/>
+  <circle cx="600" cy="600" r="200" fill="#FFC000"/>
+</svg>
